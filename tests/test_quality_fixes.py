@@ -57,3 +57,39 @@ def test_accuracy_history_excludes_current_match_and_seed_2026():
     history = accuracy.build_prediction_history(df, row)
 
     assert history["id"].tolist() == [1]
+
+
+def test_team_stats_empty_input_keeps_expected_columns():
+    statistics = importlib.import_module("src.statistics")
+    teams = pd.DataFrame(
+        [
+            {"nome": "Brasil", "sigla": "BRA", "elo_rating": 1986.0, "ranking_fifa": 6},
+        ]
+    )
+    matches = pd.DataFrame(
+        columns=["mandante_nome", "visitante_nome", "gols_mandante", "gols_visitante"]
+    )
+
+    df_stats = statistics.build_team_stats(matches, teams, {}, {})
+
+    assert df_stats.empty
+    assert "Seleção" in df_stats.columns
+
+
+def test_seed_2026_stats_are_available_for_offline_statistics_page(tmp_path, monkeypatch):
+    database = importlib.import_module("src.database")
+    models = importlib.import_module("src.ML_models")
+    statistics = importlib.import_module("src.statistics")
+    monkeypatch.setattr(database, "DB_DIR", str(tmp_path))
+    monkeypatch.setattr(database, "DB_PATH", str(tmp_path / "futebot.db"))
+
+    database.init_db()
+    matches = database.load_historical_matches(include_seed_2026=True)
+    teams = database.load_all_teams()
+    matches_2026 = matches[matches["ano_copa"] == 2026]
+    ataque, defesa, _, _ = models.calculate_team_strengths(matches_2026)
+
+    df_stats = statistics.build_team_stats(matches_2026, teams, ataque, defesa)
+
+    assert not df_stats.empty
+    assert "Seleção" in df_stats.columns

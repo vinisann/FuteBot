@@ -8,6 +8,7 @@ from src.config import get_api_key
 from src.database import init_db, load_historical_matches, load_all_teams, load_2026_matches
 from src.ML_models import calculate_team_strengths, run_tournament_simulation, simulate_single_bracket, predict_match_probabilities
 from src.styles import inject_css
+from src.statistics import build_team_stats
 from src.utils import get_flag, format_fase, TEAM_FLAGS, get_flag_html, get_player_photo_url
 from src.scraper import fetch_news_rss, fetch_weather_forecast, calculate_match_odds, get_probable_lineup, get_match_venue, fetch_match_specific_news
 from datetime import datetime
@@ -496,7 +497,7 @@ st.title("📊 Estatísticas e Simulação")
 st.write("Explore o desempenho das seleções, analise os coeficientes de ataque/defesa e acompanhe as probabilidades de avanço dinâmicas.")
 
 # Carregar dados
-df_matches = load_historical_matches()
+df_matches = load_historical_matches(include_seed_2026=True)
 df_teams = load_all_teams()
 
 # Função de simulação cacheada
@@ -568,7 +569,7 @@ else:
             "Defesa (Fator)": defesa.get(team_name, 1.0)
         })
         
-    df_stats = pd.DataFrame(stats_rows)
+    df_stats = build_team_stats(df_matches_filtered, df_teams, ataque, defesa)
     
     # Insights de IA
     if not df_stats.empty:
