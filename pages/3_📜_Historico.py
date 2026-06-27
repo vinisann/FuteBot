@@ -4,7 +4,7 @@ import pandas as pd
 # Importações locais do projeto
 from src.database import init_db, load_historical_matches
 from src.styles import inject_css
-from src.utils import get_flag, format_fase, format_fase_option
+from src.utils import get_flag, get_flag_html, format_fase, format_fase_option
 
 # Configuração da página
 st.set_page_config(page_title="Histórico de Copas - FuteBot", page_icon="📜", layout="wide")
@@ -81,6 +81,8 @@ else:
                 border_class = ""
                 
             fase_exibicao = format_fase(match['fase'], match.get('grupo'))
+            mandante_flag = get_flag_html(match['mandante_nome'], width=28)
+            visitante_flag = get_flag_html(match['visitante_nome'], width=28)
             st.markdown(f"""
             <div class="glass-card {border_class}" style="padding: 12px 24px; margin-bottom:10px;">
                 <div style="display:flex; justify-content:space-between; color:#64748b; font-size:12px; margin-bottom:6px;">
@@ -88,14 +90,18 @@ else:
                     <span>Copa do Mundo {match['ano_copa']}</span>
                 </div>
                 <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <div style="flex:1; text-align:right; font-weight:600; font-size:18px; color:#1e293b;">
-                        {get_flag(match['mandante_nome'])} {match['mandante_nome']} <span style="color:#64748b; font-size:14px; font-weight:400;">({match['mandante_sigla']})</span>
+                    <div style="flex:1; display:flex; justify-content:flex-end; align-items:center; gap:8px; text-align:right; font-weight:600; font-size:18px; color:#1e293b; min-width:0;">
+                        <span style="display:inline-flex; align-items:center;">{mandante_flag}</span>
+                        <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{match['mandante_nome']}</span>
+                        <span style="color:#64748b; font-size:14px; font-weight:400;">({match['mandante_sigla']})</span>
                     </div>
                     <div style="background:rgba(37,99,235,0.08); padding:6px 20px; border-radius:30px; font-weight:800; font-size:20px; color:#2563eb; margin:0 20px; border: 1px solid rgba(37,99,235,0.2);">
                         {match['gols_mandante']} - {match['gols_visitante']}
                     </div>
-                    <div style="flex:1; text-align:left; font-weight:600; font-size:18px; color:#1e293b;">
-                        <span style="color:#64748b; font-size:14px; font-weight:400;">({match['visitante_sigla']})</span> {match['visitante_nome']} {get_flag(match['visitante_nome'])}
+                    <div style="flex:1; display:flex; justify-content:flex-start; align-items:center; gap:8px; text-align:left; font-weight:600; font-size:18px; color:#1e293b; min-width:0;">
+                        <span style="color:#64748b; font-size:14px; font-weight:400;">({match['visitante_sigla']})</span>
+                        <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{match['visitante_nome']}</span>
+                        <span style="display:inline-flex; align-items:center;">{visitante_flag}</span>
                     </div>
                 </div>
             </div>
