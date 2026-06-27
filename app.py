@@ -13,7 +13,7 @@ import os
 
 # Importações locais do projeto
 from src.config import get_api_key
-from src.database import VALID_MATCH_STATUSES, init_db, load_historical_matches, load_all_teams, update_live_match, sync_api_match_to_db, load_2026_matches
+from src.database import VALID_MATCH_STATUSES, init_db, load_historical_matches, load_all_teams, update_live_match, sync_api_match_to_db, sync_openfootball_finished_matches, load_2026_matches
 from src.ML_models import predict_match_probabilities, simulate_match_in_play
 from src.api_client import fetch_live_matches_from_api, calculate_match_minute
 from src.styles import inject_css
@@ -28,6 +28,8 @@ st.set_page_config(
 )
 
 init_db()
+if "openfootball_sync_2026" not in st.session_state:
+    st.session_state["openfootball_sync_2026"] = sync_openfootball_finished_matches(2026)
 
 # Injetar CSS compartilhado (tema branco)
 inject_css()

@@ -9,7 +9,7 @@ import html
 sys.path.append(os.path.abspath('.'))
 
 from src.accuracy import build_prediction_history
-from src.database import get_connection, init_db, load_historical_matches
+from src.database import get_connection, init_db, load_historical_matches, sync_openfootball_finished_matches
 from src.ML_models import predict_match_probabilities
 from src.styles import inject_css
 from src.utils import get_flag_html, get_flag, format_fase
@@ -27,6 +27,8 @@ st.set_page_config(
 )
 
 init_db()
+if "openfootball_sync_2026" not in st.session_state:
+    st.session_state["openfootball_sync_2026"] = sync_openfootball_finished_matches(2026)
 
 # Injetar CSS compartilhado (tema branco)
 inject_css()

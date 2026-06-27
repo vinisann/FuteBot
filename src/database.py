@@ -165,7 +165,83 @@ TRANSLATE_TEAM_NAME = {
     "IR Iran": "Irã",
 }
 
-def load_openfootball_data(ano, team_to_id):
+def parse_openfootball_matches(data, ano, team_to_id, finished_only=False):
+    """Converte JSON do openfootball/worldcup.json para tuplas de partidas."""
+    matches = sorted(data.get("matches", []), key=lambda x: x.get("date", ""))
+    partidas_db = []
+    group_match_counts = {}
+    phase_map = {
+        "Round of 16": "Oitavas",
+        "Quarter-finals": "Quartas",
+        "Semi-finals": "Semifinal",
+        "Match for third place": "Disputa 3Âº Lugar",
+        "Final": "Final",
+    }
+
+    for match in matches:
+        t1 = match.get("team1")
+        t2 = match.get("team2")
+        m_pt = TRANSLATE_TEAM_NAME.get(t1)
+        v_pt = TRANSLATE_TEAM_NAME.get(t2)
+        if not m_pt or not v_pt:
+            continue
+        if m_pt not in team_to_id or v_pt not in team_to_id:
+            continue
+
+        score_dict = match.get("score", {}) or {}
+        score_val = score_dict.get("et") or score_dict.get("ft")
+        if score_val and len(score_val) == 2:
+            gols_m, gols_v = score_val[0], score_val[1]
+        else:
+            gols_m, gols_v = None, None
+
+        status = "FINISHED" if gols_m is not None and gols_v is not None else "SCHEDULED"
+        if finished_only and status != "FINISHED":
+            continue
+
+        grupo_raw = match.get("group")
+        if grupo_raw and grupo_raw.startswith("Group "):
+            grupo = grupo_raw.replace("Group ", "")
+            count = group_match_counts.get(grupo, 0) + 1
+            group_match_counts[grupo] = count
+            if count <= 2:
+                fase = "1"
+            elif count <= 4:
+                fase = "2"
+            else:
+                fase = "3"
+        else:
+            fase = phase_map.get(match.get("round", ""), match.get("round", ""))
+            grupo = None
+
+        mandante_id = team_to_id[m_pt]
+        visitante_id = team_to_id[v_pt]
+        vencedor_id = None
+        if gols_m is not None and gols_v is not None:
+            if gols_m > gols_v:
+                vencedor_id = mandante_id
+            elif gols_v > gols_m:
+                vencedor_id = visitante_id
+
+        time_raw = match.get("time", "")
+        time_part = time_raw.split()[0] if time_raw else "00:00"
+        data_hora = f"{match.get('date', '')} {time_part}".strip()
+        partidas_db.append((
+            ano,
+            data_hora,
+            mandante_id,
+            visitante_id,
+            gols_m,
+            gols_v,
+            fase,
+            grupo,
+            status,
+            vencedor_id,
+        ))
+
+    return partidas_db
+
+def load_openfootball_data(ano, team_to_id, finished_only=False):
     """
     Consome a base openfootball/worldcup.json para obter confrontos reais de um ano específico.
     Retorna a lista de partidas prontas para inserção.
@@ -174,6 +250,7 @@ def load_openfootball_data(ano, team_to_id):
     response = requests.get(url, timeout=10)
     response.raise_for_status()
     data = response.json()
+    return parse_openfootball_matches(data, ano, team_to_id, finished_only=finished_only)
     
     matches = data.get("matches", [])
     matches = sorted(matches, key=lambda x: x.get("date", ""))
@@ -774,6 +851,94 @@ def load_2026_matches():
         return df
     finally:
         conn.close()
+
+def sync_openfootball_finished_matches(ano=2026):
+    """
+    Sincroniza partidas finalizadas do openfootball/worldcup.json.
+    Jogos sem placar final sao ignorados; agendas futuras ficam para Football-Data.org.
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT nome, id FROM selecoes")
+        team_to_id = {row["nome"]: row["id"] for row in cursor.fetchall()}
+    finally:
+        conn.close()
+
+    try:
+        partidas = load_openfootball_data(ano, team_to_id, finished_only=True)
+    except Exception as exc:
+        return 0, f"erro: {str(exc)[:120]}"
+
+    updated = 0
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        for partida in partidas:
+            (
+                ano_copa,
+                data_hora,
+                mandante_id,
+                visitante_id,
+                gols_m,
+                gols_v,
+                fase,
+                grupo,
+                status,
+                vencedor_id,
+            ) = partida
+
+            cursor.execute(
+                """
+                SELECT id, mandante_id
+                FROM partidas
+                WHERE ano_copa = ? AND fase = ? AND (
+                    (mandante_id = ? AND visitante_id = ?) OR
+                    (mandante_id = ? AND visitante_id = ?)
+                )
+                """,
+                (ano_copa, fase, mandante_id, visitante_id, visitante_id, mandante_id),
+            )
+            match_row = cursor.fetchone()
+
+            if match_row:
+                cursor.execute(
+                    """
+                    UPDATE partidas
+                    SET mandante_id = ?, visitante_id = ?, gols_mandante = ?, gols_visitante = ?,
+                        status = ?, fase = ?, grupo = ?, data_hora = ?, vencedor_id = ?,
+                        origem_dados = 'openfootball'
+                    WHERE id = ?
+                    """,
+                    (
+                        mandante_id,
+                        visitante_id,
+                        gols_m,
+                        gols_v,
+                        status,
+                        fase,
+                        grupo,
+                        data_hora,
+                        vencedor_id,
+                        match_row["id"],
+                    ),
+                )
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO partidas
+                    (ano_copa, data_hora, mandante_id, visitante_id, gols_mandante, gols_visitante,
+                     fase, grupo, status, vencedor_id, origem_dados)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'openfootball')
+                    """,
+                    partida,
+                )
+            updated += 1
+        conn.commit()
+    finally:
+        conn.close()
+
+    return updated, "ok"
 
 def sync_api_match_to_db(game):
     """

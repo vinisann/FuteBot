@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 
 # Importações locais do projeto
 from src.config import get_api_key
-from src.database import init_db, load_historical_matches, load_all_teams, load_2026_matches
+from src.database import init_db, load_historical_matches, load_all_teams, load_2026_matches, sync_openfootball_finished_matches
 from src.ML_models import calculate_team_strengths, run_tournament_simulation, simulate_single_bracket, predict_match_probabilities
 from src.styles import inject_css
 from src.statistics import build_team_stats
@@ -459,6 +459,8 @@ def build_group_standings_html(group_name, standings_rows):
 st.set_page_config(page_title="Estatísticas - FuteBot", page_icon="📊", layout="wide")
 
 init_db()
+if "openfootball_sync_2026" not in st.session_state:
+    st.session_state["openfootball_sync_2026"] = sync_openfootball_finished_matches(2026)
 
 # CSS compartilhado (tema branco)
 inject_css()

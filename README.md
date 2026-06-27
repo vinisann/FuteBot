@@ -47,6 +47,12 @@ streamlit run app.py
 
 The SQLite database is generated locally under `data/` on first run. Local `.db` files are intentionally ignored by Git.
 
+## Data Sources
+
+- OpenFootball (`openfootball/worldcup.json`) is used to refresh finished World Cup matches when the raw GitHub JSON is reachable.
+- Football-Data.org is the optional real-time layer for live matches and future scheduled fixtures.
+- If external sources are unavailable, the app keeps using the local offline fallback data.
+
 ## QA Checks
 
 ```powershell
@@ -60,4 +66,4 @@ pytest -q
 
 - Embedded 2026 data is treated as offline fallback seed data.
 - Prediction accuracy excludes 2026 fallback seed matches and predicts each match using only earlier historical data.
-- API-synced matches are marked separately from local seed data in the database.
+- API-synced and OpenFootball-synced matches are marked separately from local seed data in the database.

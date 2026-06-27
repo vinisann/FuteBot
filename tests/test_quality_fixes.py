@@ -93,3 +93,72 @@ def test_seed_2026_stats_are_available_for_offline_statistics_page(tmp_path, mon
 
     assert not df_stats.empty
     assert "Seleção" in df_stats.columns
+
+
+def test_openfootball_parser_uses_only_finished_matches_when_requested():
+    database = importlib.import_module("src.database")
+    team_to_id = {"Brasil": 1, "Alemanha": 2, "Argentina": 3, "França": 4}
+    payload = {
+        "matches": [
+            {
+                "date": "2026-06-11",
+                "time": "14:00",
+                "team1": "Brazil",
+                "team2": "Germany",
+                "group": "Group A",
+                "score": {"ft": [2, 1]},
+            },
+            {
+                "date": "2026-06-12",
+                "time": "17:00",
+                "team1": "Argentina",
+                "team2": "France",
+                "group": "Group A",
+            },
+        ]
+    }
+
+    partidas = database.parse_openfootball_matches(payload, 2026, team_to_id, finished_only=True)
+
+    assert len(partidas) == 1
+    assert partidas[0][0] == 2026
+    assert partidas[0][5] == 1
+    assert partidas[0][8] == "FINISHED"
+
+
+def test_openfootball_sync_marks_finished_matches_as_openfootball(tmp_path, monkeypatch):
+    database = importlib.import_module("src.database")
+    monkeypatch.setattr(database, "DB_DIR", str(tmp_path))
+    monkeypatch.setattr(database, "DB_PATH", str(tmp_path / "futebot.db"))
+
+    def fake_loader(ano, team_to_id, finished_only=True):
+        return [
+            (
+                ano,
+                "2026-06-11 14:00",
+                team_to_id["Brasil"],
+                team_to_id["Alemanha"],
+                2,
+                1,
+                "1",
+                "A",
+                "FINISHED",
+                team_to_id["Brasil"],
+            )
+        ]
+
+    monkeypatch.setattr(database, "load_openfootball_data", fake_loader)
+    database.init_db()
+
+    updated, status = database.sync_openfootball_finished_matches(2026)
+    df = database.load_historical_matches(include_seed_2026=True)
+    synced = df[
+        (df["ano_copa"] == 2026)
+        & (df["mandante_nome"] == "Brasil")
+        & (df["visitante_nome"] == "Alemanha")
+    ]
+
+    assert updated == 1
+    assert status == "ok"
+    assert not synced.empty
+    assert synced.iloc[0]["origem_dados"] == "openfootball"
