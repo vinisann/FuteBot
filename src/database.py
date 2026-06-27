@@ -57,12 +57,39 @@ def init_db():
             FOREIGN KEY (vencedor_id) REFERENCES selecoes(id)
         )
         """)
+
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS previsoes_partidas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            partida_id INTEGER NOT NULL,
+            modelo_versao TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            xg_mandante REAL NOT NULL,
+            xg_visitante REAL NOT NULL,
+            prob_mandante REAL NOT NULL,
+            prob_empate REAL NOT NULL,
+            prob_visitante REAL NOT NULL,
+            prev_gols_mandante INTEGER NOT NULL,
+            prev_gols_visitante INTEGER NOT NULL,
+            gols_mandante_real INTEGER,
+            gols_visitante_real INTEGER,
+            outcome_correct INTEGER,
+            score_exact INTEGER,
+            goal_error REAL,
+            brier_score REAL,
+            evaluated_at TEXT,
+            FOREIGN KEY (partida_id) REFERENCES partidas(id),
+            UNIQUE (partida_id, modelo_versao)
+        )
+        """)
         
         # Criar índices para performance
         _ensure_partidas_schema(cursor)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_partidas_ano ON partidas(ano_copa);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_partidas_status ON partidas(status);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_partidas_origem ON partidas(origem_dados);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_previsoes_partida ON previsoes_partidas(partida_id);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_previsoes_evaluated ON previsoes_partidas(evaluated_at);")
         
         conn.commit()
     finally:
@@ -852,6 +879,148 @@ def load_2026_matches():
     finally:
         conn.close()
 
+def save_prediction_snapshot(partida_id, prediction, modelo_versao="calibrated-v1"):
+    """Salva uma previsao pre-jogo uma unica vez por partida e versao do modelo."""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, status FROM partidas WHERE id = ?",
+            (partida_id,),
+        )
+        match_row = cursor.fetchone()
+        if not match_row or match_row["status"] == "FINISHED":
+            return None
+
+        cursor.execute(
+            """
+            SELECT id FROM previsoes_partidas
+            WHERE partida_id = ? AND modelo_versao = ?
+            """,
+            (partida_id, modelo_versao),
+        )
+        existing = cursor.fetchone()
+        if existing:
+            return existing["id"]
+
+        placar = prediction.get("placar_mais_provavel", (0, 0, 0.0))
+        cursor.execute(
+            """
+            INSERT INTO previsoes_partidas
+            (partida_id, modelo_versao, created_at, xg_mandante, xg_visitante,
+             prob_mandante, prob_empate, prob_visitante, prev_gols_mandante, prev_gols_visitante)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                partida_id,
+                modelo_versao,
+                datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+                float(prediction["xG_mandante"]),
+                float(prediction["xG_visitante"]),
+                float(prediction["prob_vitoria_mandante"]),
+                float(prediction["prob_empate"]),
+                float(prediction["prob_vitoria_visitante"]),
+                int(placar[0]),
+                int(placar[1]),
+            ),
+        )
+        conn.commit()
+        return cursor.lastrowid
+    finally:
+        conn.close()
+
+def _outcome_index(gols_m, gols_v):
+    if gols_m > gols_v:
+        return 0
+    if gols_m == gols_v:
+        return 1
+    return 2
+
+def _brier_score(prob_m, prob_e, prob_v, actual_idx):
+    probs = [float(prob_m), float(prob_e), float(prob_v)]
+    return sum((prob - (1.0 if idx == actual_idx else 0.0)) ** 2 for idx, prob in enumerate(probs))
+
+def evaluate_finished_predictions():
+    """Avalia snapshots de previsao quando a partida real ja terminou."""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        rows = cursor.execute(
+            """
+            SELECT
+                pp.id, pp.prob_mandante, pp.prob_empate, pp.prob_visitante,
+                pp.prev_gols_mandante, pp.prev_gols_visitante,
+                p.gols_mandante, p.gols_visitante
+            FROM previsoes_partidas pp
+            JOIN partidas p ON p.id = pp.partida_id
+            WHERE pp.evaluated_at IS NULL
+              AND p.status = 'FINISHED'
+              AND p.origem_dados != 'seed'
+              AND p.gols_mandante IS NOT NULL
+              AND p.gols_visitante IS NOT NULL
+            """
+        ).fetchall()
+
+        evaluated = 0
+        for row in rows:
+            actual_idx = _outcome_index(row["gols_mandante"], row["gols_visitante"])
+            predicted_idx = int(
+                max(
+                    range(3),
+                    key=lambda idx: [row["prob_mandante"], row["prob_empate"], row["prob_visitante"]][idx],
+                )
+            )
+            score_exact = (
+                int(row["prev_gols_mandante"]) == int(row["gols_mandante"])
+                and int(row["prev_gols_visitante"]) == int(row["gols_visitante"])
+            )
+            goal_error = abs(int(row["gols_mandante"]) - int(row["prev_gols_mandante"])) + abs(
+                int(row["gols_visitante"]) - int(row["prev_gols_visitante"])
+            )
+            cursor.execute(
+                """
+                UPDATE previsoes_partidas
+                SET gols_mandante_real = ?, gols_visitante_real = ?, outcome_correct = ?,
+                    score_exact = ?, goal_error = ?, brier_score = ?, evaluated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    int(row["gols_mandante"]),
+                    int(row["gols_visitante"]),
+                    1 if predicted_idx == actual_idx else 0,
+                    1 if score_exact else 0,
+                    float(goal_error),
+                    float(_brier_score(row["prob_mandante"], row["prob_empate"], row["prob_visitante"], actual_idx)),
+                    datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+                    row["id"],
+                ),
+            )
+            evaluated += 1
+
+        conn.commit()
+        return evaluated
+    finally:
+        conn.close()
+
+def load_prediction_evaluations():
+    """Retorna snapshots e metricas de previsoes pre-jogo."""
+    conn = get_connection()
+    try:
+        query = """
+            SELECT
+                pp.*,
+                p.ano_copa, p.data_hora, p.fase, p.grupo, p.status, p.origem_dados,
+                m.nome AS mandante_nome, v.nome AS visitante_nome
+            FROM previsoes_partidas pp
+            JOIN partidas p ON p.id = pp.partida_id
+            JOIN selecoes m ON m.id = p.mandante_id
+            JOIN selecoes v ON v.id = p.visitante_id
+            ORDER BY p.data_hora ASC, pp.created_at ASC
+        """
+        return pd.read_sql_query(query, conn)
+    finally:
+        conn.close()
+
 def sync_openfootball_finished_matches(ano=2026):
     """
     Sincroniza partidas finalizadas do openfootball/worldcup.json.
@@ -958,7 +1127,7 @@ def sync_api_match_to_db(game):
     vencedor_nome = game.get("vencedor_nome")
     
     if m_name == "TBD" or v_name == "TBD":
-        return
+        return None
         
     conn = get_connection()
     try:
@@ -1022,6 +1191,7 @@ def sync_api_match_to_db(game):
                         (m_id, v_id, gols_m, gols_v, status, fase, grupo, data_hora, vencedor_id, p_id)
                     )
                     conn.commit()
+                    return p_id
                 else:
                     # Ordem correta, atualiza se houver qualquer diferença
                     if (db_status != status or db_gols_m != gols_m or 
@@ -1035,6 +1205,7 @@ def sync_api_match_to_db(game):
                             (gols_m, gols_v, status, fase, grupo, data_hora, vencedor_id, p_id)
                         )
                         conn.commit()
+                    return p_id
             else:
                 # Caso não exista, insere no banco
                 cursor.execute(
@@ -1045,8 +1216,11 @@ def sync_api_match_to_db(game):
                     (ano, data_hora, m_id, v_id, gols_m, gols_v, fase, grupo, status, vencedor_id)
                 )
                 conn.commit()
+                return cursor.lastrowid
     finally:
         conn.close()
+
+    return None
 
 def update_live_match(partida_id, gols_m, gols_v, status):
     """Atualiza o placar, o status e define o vencedor para jogos finalizados."""
@@ -1081,6 +1255,8 @@ def update_live_match(partida_id, gols_m, gols_v, status):
         conn.commit()
     finally:
         conn.close()
+    if status == "FINISHED":
+        evaluate_finished_predictions()
 
 def clear_2026_matches():
     """Remove todas as partidas de 2026 do banco para evitar duplicações com a API."""

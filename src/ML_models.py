@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import random
 from scipy.stats import poisson
+from src.model_calibration import apply_calibration_to_lambdas
 
 def calculate_team_strengths(df_matches):
     """
@@ -107,7 +108,7 @@ def simulate_penalty_shootout(elo_diff):
             
     return goals_m, goals_v
 
-def predict_match_probabilities(mandante_nome, visitante_nome, mandante_elo, visitante_elo, df_matches, max_gols=7):
+def predict_match_probabilities(mandante_nome, visitante_nome, mandante_elo, visitante_elo, df_matches, max_gols=7, calibration=None):
     """
     Calcula as probabilidades de resultado de uma partida (Vitória Mandante, Empate, Vitória Visitante)
     e gera a matriz de probabilidade de placares exatos usando a distribuição de Poisson e ELO.
@@ -146,6 +147,9 @@ def predict_match_probabilities(mandante_nome, visitante_nome, mandante_elo, vis
     
     lambda_m = lambda_m * np.sqrt(elo_adjustment)
     lambda_v = lambda_v / np.sqrt(elo_adjustment)
+    lambda_m, lambda_v, calibration_meta = apply_calibration_to_lambdas(
+        lambda_m, lambda_v, mandante_nome, visitante_nome, calibration
+    )
     
     # Evitar lambdas zerados para não quebrar a distribuição de Poisson
     lambda_m = max(lambda_m, 0.1)
@@ -176,6 +180,23 @@ def predict_match_probabilities(mandante_nome, visitante_nome, mandante_elo, vis
                 prob_empate += prob
             else:
                 prob_vitoria_v += prob
+
+    fator_zebra = calibration_meta["fator_zebra"]
+    if fator_zebra > 0:
+        probs = [prob_vitoria_m, prob_empate, prob_vitoria_v]
+        favorite_idx = int(np.argmax(probs))
+        favorite_prob = probs[favorite_idx]
+        shift = min(fator_zebra, max(0.0, favorite_prob - 0.34))
+        if shift > 0:
+            probs[favorite_idx] -= shift
+            if favorite_idx == 1:
+                probs[0] += shift / 2.0
+                probs[2] += shift / 2.0
+            else:
+                underdog_idx = 2 if favorite_idx == 0 else 0
+                probs[1] += shift * 0.4
+                probs[underdog_idx] += shift * 0.6
+            prob_vitoria_m, prob_empate, prob_vitoria_v = probs
                 
     # Encontrar o placar mais provável
     m_idx, v_idx = np.unravel_index(np.argmax(matriz_placar), matriz_placar.shape)
@@ -191,7 +212,8 @@ def predict_match_probabilities(mandante_nome, visitante_nome, mandante_elo, vis
         "prob_vitoria_visitante": float(prob_vitoria_v),
         "placar_mais_provavel": placar_mais_provavel,
         "matriz_placar": matriz_placar.tolist(), # Convertido para lista JSON serializeable
-        "gols_range": list(range(max_gols + 1))
+        "gols_range": list(range(max_gols + 1)),
+        **calibration_meta,
     }
 
 def simulate_match_in_play(prob_pre_jogo, tempo_atual, gols_m_atual, gols_v_atual, max_gols=7):
@@ -289,7 +311,7 @@ def get_group_teams(df_matches_2026):
             group_teams.setdefault(grupo, set()).add(v)
     return {g: list(teams) for g, teams in group_teams.items()}
 
-def simulate_group_matches(df_2026, ataque, defesa, avg_m, avg_v, team_elo):
+def simulate_group_matches(df_2026, ataque, defesa, avg_m, avg_v, team_elo, calibration=None):
     simulated_matches = df_2026.copy()
     for idx, row in simulated_matches.iterrows():
         if row["status"] != "FINISHED":
@@ -312,6 +334,9 @@ def simulate_group_matches(df_2026, ataque, defesa, avg_m, avg_v, team_elo):
             
             lambda_m = max(lambda_m * np.sqrt(elo_adjustment), 0.1)
             lambda_v = max(lambda_v / np.sqrt(elo_adjustment), 0.1)
+            lambda_m, lambda_v, _ = apply_calibration_to_lambdas(
+                lambda_m, lambda_v, m_name, v_name, calibration
+            )
             
             gols_m = np.random.poisson(lambda_m)
             gols_v = np.random.poisson(lambda_v)
@@ -426,7 +451,7 @@ def get_group_standings(simulated_matches, group_teams, team_elo):
         standings[group_name] = sorted_teams
     return standings
 
-def simulate_knockout_match(m_name, v_name, ataque, defesa, avg_m, avg_v, team_elo):
+def simulate_knockout_match(m_name, v_name, ataque, defesa, avg_m, avg_v, team_elo, calibration=None):
     # Guard contra times fantasma
     if not m_name or m_name == "TBD":
         return v_name
@@ -450,6 +475,9 @@ def simulate_knockout_match(m_name, v_name, ataque, defesa, avg_m, avg_v, team_e
     
     lambda_m = max(lambda_m * np.sqrt(elo_adjustment), 0.1)
     lambda_v = max(lambda_v / np.sqrt(elo_adjustment), 0.1)
+    lambda_m, lambda_v, _ = apply_calibration_to_lambdas(
+        lambda_m, lambda_v, m_name, v_name, calibration
+    )
     
     gols_m = np.random.poisson(lambda_m)
     gols_v = np.random.poisson(lambda_v)
@@ -463,7 +491,7 @@ def simulate_knockout_match(m_name, v_name, ataque, defesa, avg_m, avg_v, team_e
         gp_m, gp_v = simulate_penalty_shootout(elo_diff)
         return m_name if gp_m > gp_v else v_name
 
-def run_tournament_simulation(df_matches, df_teams, df_2026, iterations=100):
+def run_tournament_simulation(df_matches, df_teams, df_2026, iterations=100, calibration=None):
     iterations = max(1, min(10000, int(iterations))) if iterations is not None else 100
     ataque, defesa, avg_m, avg_v = calculate_team_strengths(df_matches)
     team_elo = {row["nome"]: row["elo_rating"] for _, row in df_teams.iterrows()}
@@ -522,6 +550,9 @@ def run_tournament_simulation(df_matches, df_teams, df_2026, iterations=100):
         
         lambda_m = max(lambda_m * np.sqrt(elo_adjustment), 0.1)
         lambda_v = max(lambda_v / np.sqrt(elo_adjustment), 0.1)
+        lambda_m, lambda_v, _ = apply_calibration_to_lambdas(
+            lambda_m, lambda_v, t1, t2, calibration
+        )
         
         gols_m = np.random.poisson(lambda_m)
         gols_v = np.random.poisson(lambda_v)
@@ -590,7 +621,7 @@ def run_tournament_simulation(df_matches, df_teams, df_2026, iterations=100):
             r32_winners = {73 + idx: w for idx, w in enumerate(r32_winners_list)}
         else:
             # Simula a Fase de Grupos
-            sim_matches = simulate_group_matches(df_2026, ataque, defesa, avg_m, avg_v, team_elo)
+            sim_matches = simulate_group_matches(df_2026, ataque, defesa, avg_m, avg_v, team_elo, calibration=calibration)
             standings = get_group_standings(sim_matches, group_teams, team_elo)
             
             winners = {}
@@ -784,7 +815,7 @@ def run_tournament_simulation(df_matches, df_teams, df_2026, iterations=100):
         
     return pd.DataFrame(prob_df)
 
-def simulate_single_bracket(df_matches, df_teams, df_2026):
+def simulate_single_bracket(df_matches, df_teams, df_2026, calibration=None):
     import random
     ataque, defesa, avg_m, avg_v = calculate_team_strengths(df_matches)
     team_elo = {row["nome"]: row["elo_rating"] for _, row in df_teams.iterrows()}
@@ -843,6 +874,9 @@ def simulate_single_bracket(df_matches, df_teams, df_2026):
         
         lambda_m = max(lambda_m * np.sqrt(elo_adjustment), 0.1)
         lambda_v = max(lambda_v / np.sqrt(elo_adjustment), 0.1)
+        lambda_m, lambda_v, _ = apply_calibration_to_lambdas(
+            lambda_m, lambda_v, t1, t2, calibration
+        )
         
         gols_m = np.random.poisson(lambda_m)
         gols_v = np.random.poisson(lambda_v)
@@ -894,7 +928,7 @@ def simulate_single_bracket(df_matches, df_teams, df_2026):
         r32_winners = {73 + idx: w for idx, w in enumerate(r32_winners_list)}
     else:
         group_teams = get_group_teams(df_2026)
-        sim_matches = simulate_group_matches(df_2026, ataque, defesa, avg_m, avg_v, team_elo)
+        sim_matches = simulate_group_matches(df_2026, ataque, defesa, avg_m, avg_v, team_elo, calibration=calibration)
         standings = get_group_standings(sim_matches, group_teams, team_elo)
         
         winners = {}

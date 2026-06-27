@@ -7,8 +7,9 @@ import html
 import textwrap
 
 # Importações locais do projeto
-from src.database import init_db, load_historical_matches, load_all_teams
+from src.database import init_db, load_historical_matches, load_all_teams, load_prediction_evaluations
 from src.ML_models import predict_match_probabilities
+from src.model_calibration import build_model_calibration
 from src.styles import inject_css
 from src.utils import get_flag, get_flag_html
 
@@ -30,6 +31,7 @@ st.write("Selecione duas equipes nacionais quaisquer para simular um confronto h
 # Carregar dados
 df_matches = load_historical_matches()
 df_teams = load_all_teams()
+model_calibration = build_model_calibration(df_matches, load_prediction_evaluations())
 
 if df_matches.empty:
     st.error("Dados históricos insuficientes no banco de dados para alimentar a IA preditiva.")
@@ -56,7 +58,9 @@ else:
         v_fifa = visitante_data["ranking_fifa"]
         
         # Calcular previsões de probabilidade
-        pred = predict_match_probabilities(mandante_nome, visitante_nome, m_elo, v_elo, df_matches)
+        pred = predict_match_probabilities(
+            mandante_nome, visitante_nome, m_elo, v_elo, df_matches, calibration=model_calibration
+        )
         
         p_mandante = pred["prob_vitoria_mandante"] * 100
         p_empate = pred["prob_empate"] * 100

@@ -9,7 +9,7 @@ import html
 sys.path.append(os.path.abspath('.'))
 
 from src.accuracy import build_prediction_history
-from src.database import get_connection, init_db, load_historical_matches, sync_openfootball_finished_matches
+from src.database import get_connection, init_db, load_historical_matches, sync_openfootball_finished_matches, evaluate_finished_predictions, load_prediction_evaluations
 from src.ML_models import predict_match_probabilities
 from src.styles import inject_css
 from src.utils import get_flag_html, get_flag, format_fase
@@ -29,6 +29,7 @@ st.set_page_config(
 init_db()
 if "openfootball_sync_2026" not in st.session_state:
     st.session_state["openfootball_sync_2026"] = sync_openfootball_finished_matches(2026)
+    evaluate_finished_predictions()
 
 # Injetar CSS compartilhado (tema branco)
 inject_css()
@@ -161,6 +162,9 @@ st.markdown(clean_html("""
 
 # Buscar todas as previsões da base
 df_pred = get_retroactive_predictions()
+df_calibrated_eval = load_prediction_evaluations()
+if not df_calibrated_eval.empty:
+    df_calibrated_eval = df_calibrated_eval.dropna(subset=["evaluated_at"]).copy()
 
 if df_pred.empty:
     st.info("Nenhuma partida finalizada no banco de dados para calcular a acurácia no momento.")
@@ -187,6 +191,16 @@ if selected_team != "Todas":
         (df_filtered["mandante_nome"] == selected_team) | 
         (df_filtered["visitante_nome"] == selected_team)
     ]
+
+df_calibrated_filtered = df_calibrated_eval.copy()
+if not df_calibrated_filtered.empty:
+    if year_filter != "Todas":
+        df_calibrated_filtered = df_calibrated_filtered[df_calibrated_filtered["ano_copa"] == int(year_filter)]
+    if selected_team != "Todas":
+        df_calibrated_filtered = df_calibrated_filtered[
+            (df_calibrated_filtered["mandante_nome"] == selected_team)
+            | (df_calibrated_filtered["visitante_nome"] == selected_team)
+        ]
 
 # Métricas Calculadas
 total_jogos = len(df_filtered)
@@ -248,6 +262,32 @@ st.markdown(clean_html(f"""
     </div>
 </div>
 """), unsafe_allow_html=True)
+
+st.markdown("### Comparativo do Modelo Calibrado")
+if df_calibrated_filtered.empty:
+    st.info(
+        "A calibração incremental ainda não tem previsões pré-jogo avaliadas para estes filtros. "
+        "Depois que jogos agendados forem previstos e finalizados, esta seção compara o modelo calibrado com o backtest base."
+    )
+else:
+    cal_total = len(df_calibrated_filtered)
+    cal_outcome = int(df_calibrated_filtered["outcome_correct"].fillna(0).sum())
+    cal_score = int(df_calibrated_filtered["score_exact"].fillna(0).sum())
+    cal_mae = float(df_calibrated_filtered["goal_error"].mean())
+    cal_brier = float(df_calibrated_filtered["brier_score"].mean())
+    cal_acc = (cal_outcome / cal_total) * 100 if cal_total else 0.0
+    cal_score_acc = (cal_score / cal_total) * 100 if cal_total else 0.0
+
+    col_base, col_cal, col_sample = st.columns(3)
+    with col_base:
+        st.metric("Modelo base - 1X2", f"{acc_vencedor:.1f}%")
+        st.caption("Backtest temporal sem usar a própria partida no histórico.")
+    with col_cal:
+        st.metric("Modelo calibrado - 1X2", f"{cal_acc:.1f}%", delta=f"{cal_acc - acc_vencedor:.1f} p.p.")
+        st.caption(f"Placar exato: {cal_score_acc:.1f}% | MAE: {cal_mae:.2f}")
+    with col_sample:
+        st.metric("Previsões avaliadas", cal_total)
+        st.caption(f"Brier Score médio: {cal_brier:.3f}")
 
 # Tabela detalhada
 st.markdown("### 📋 Log Completo de Previsões vs Realidade")

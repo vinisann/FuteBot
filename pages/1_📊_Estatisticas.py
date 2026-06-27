@@ -5,8 +5,9 @@ import plotly.graph_objects as go
 
 # Importações locais do projeto
 from src.config import get_api_key
-from src.database import init_db, load_historical_matches, load_all_teams, load_2026_matches, sync_openfootball_finished_matches
+from src.database import init_db, load_historical_matches, load_all_teams, load_2026_matches, sync_openfootball_finished_matches, evaluate_finished_predictions, load_prediction_evaluations
 from src.ML_models import calculate_team_strengths, run_tournament_simulation, simulate_single_bracket, predict_match_probabilities
+from src.model_calibration import build_model_calibration
 from src.styles import inject_css
 from src.statistics import build_team_stats
 from src.utils import get_flag, format_fase, TEAM_FLAGS, get_flag_html, get_player_photo_url
@@ -461,6 +462,7 @@ st.set_page_config(page_title="Estatísticas - FuteBot", page_icon="📊", layou
 init_db()
 if "openfootball_sync_2026" not in st.session_state:
     st.session_state["openfootball_sync_2026"] = sync_openfootball_finished_matches(2026)
+    evaluate_finished_predictions()
 
 # CSS compartilhado (tema branco)
 inject_css()
@@ -486,6 +488,7 @@ if api_key:
             
         for game in live_games_api:
             sync_api_match_to_db(game)
+        evaluate_finished_predictions()
             
     # Exibir status de conexão na sidebar
     if "✅" in status_api:
@@ -501,14 +504,17 @@ st.write("Explore o desempenho das seleções, analise os coeficientes de ataque
 # Carregar dados
 df_matches = load_historical_matches(include_seed_2026=True)
 df_teams = load_all_teams()
+df_prediction_evaluations = load_prediction_evaluations()
+model_calibration = build_model_calibration(load_historical_matches(), df_prediction_evaluations)
 
 # Função de simulação cacheada
 @st.cache_data
-def get_cached_simulation(matches_len, elo_sum):
+def get_cached_simulation(matches_len, elo_sum, evaluated_predictions):
     df_m = load_historical_matches()
     df_t = load_all_teams()
     df_2026 = load_2026_matches()
-    return run_tournament_simulation(df_m, df_t, df_2026, iterations=150)
+    calibration = build_model_calibration(df_m, load_prediction_evaluations())
+    return run_tournament_simulation(df_m, df_t, df_2026, iterations=150, calibration=calibration)
 
 if df_matches.empty:
     st.warning("Não há partidas finalizadas no banco de dados para calcular estatísticas.")
@@ -1153,7 +1159,7 @@ else:
         matches_len = len(m2026[m2026["status"] == "FINISHED"])
         elo_sum = sum(df_teams["elo_rating"])
         
-        df_probs = get_cached_simulation(matches_len, elo_sum)
+        df_probs = get_cached_simulation(matches_len, elo_sum, len(df_prediction_evaluations))
         
         # Formatar exibição com ordenação correta e bandeiras oficiais
         df_probs_display = df_probs.copy()
@@ -1398,7 +1404,7 @@ else:
                 visitante_elo = next_match["visitante_elo"]
                 pred = predict_match_probabilities(
                     next_match["mandante_nome"], next_match["visitante_nome"],
-                    mandante_elo, visitante_elo, df_matches
+                    mandante_elo, visitante_elo, df_matches, calibration=model_calibration
                 )
                 odds_data = calculate_match_odds(
                     pred["prob_vitoria_mandante"], pred["prob_empate"], pred["prob_vitoria_visitante"]

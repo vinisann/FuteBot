@@ -13,8 +13,9 @@ import os
 
 # Importações locais do projeto
 from src.config import get_api_key
-from src.database import VALID_MATCH_STATUSES, init_db, load_historical_matches, load_all_teams, update_live_match, sync_api_match_to_db, sync_openfootball_finished_matches, load_2026_matches
+from src.database import VALID_MATCH_STATUSES, init_db, load_historical_matches, load_all_teams, update_live_match, sync_api_match_to_db, sync_openfootball_finished_matches, load_2026_matches, save_prediction_snapshot, evaluate_finished_predictions, load_prediction_evaluations
 from src.ML_models import predict_match_probabilities, simulate_match_in_play
+from src.model_calibration import build_model_calibration
 from src.api_client import fetch_live_matches_from_api, calculate_match_minute
 from src.styles import inject_css
 from src.utils import get_flag, format_fase, get_flag_html
@@ -30,6 +31,7 @@ st.set_page_config(
 init_db()
 if "openfootball_sync_2026" not in st.session_state:
     st.session_state["openfootball_sync_2026"] = sync_openfootball_finished_matches(2026)
+    evaluate_finished_predictions()
 
 # Injetar CSS compartilhado (tema branco)
 inject_css()
@@ -143,7 +145,7 @@ def generate_simulation_data(m_name, v_name, pred_pre):
     }
 
 
-def render_match_card(game, df_matches, team_elo_map, team_sigla_map):
+def render_match_card(game, df_matches, team_elo_map, team_sigla_map, calibration=None):
     """Renderiza o card de uma partida com base no seu status."""
     g_id = game["id"]
     m_name = game["mandante_nome"]
@@ -222,7 +224,7 @@ def render_match_card(game, df_matches, team_elo_map, team_sigla_map):
 
         # ---- JOGO AO VIVO: Probabilidade dinâmica ----
         if status == "LIVE":
-            pred_pre = predict_match_probabilities(m_name, v_name, m_elo, v_elo, df_matches)
+            pred_pre = predict_match_probabilities(m_name, v_name, m_elo, v_elo, df_matches, calibration=calibration)
 
             minuto = game.get("minuto")
             if minuto is None:
@@ -272,7 +274,8 @@ def render_match_card(game, df_matches, team_elo_map, team_sigla_map):
 
         # ---- JOGO AGENDADO: Previsão pré-jogo + botão de simulação ----
         elif status == "SCHEDULED":
-            pred_pre = predict_match_probabilities(m_name, v_name, m_elo, v_elo, df_matches)
+            pred_pre = predict_match_probabilities(m_name, v_name, m_elo, v_elo, df_matches, calibration=calibration)
+            save_prediction_snapshot(g_id, pred_pre)
 
             p_m = pred_pre["prob_vitoria_mandante"] * 100
             p_e = pred_pre["prob_empate"] * 100
@@ -331,7 +334,7 @@ def render_match_card(game, df_matches, team_elo_map, team_sigla_map):
 
         # ---- JOGO FINALIZADO: Resumo ----
         elif status == "FINISHED":
-            pred_pre = predict_match_probabilities(m_name, v_name, m_elo, v_elo, df_matches)
+            pred_pre = predict_match_probabilities(m_name, v_name, m_elo, v_elo, df_matches, calibration=calibration)
             p_m = pred_pre["prob_vitoria_mandante"] * 100
             p_e = pred_pre["prob_empate"] * 100
             p_v = pred_pre["prob_vitoria_visitante"] * 100
@@ -773,7 +776,10 @@ if api_key:
         live_games = live_games_api
         is_offline = False
         for game in live_games:
-            sync_api_match_to_db(game)
+            local_match_id = sync_api_match_to_db(game)
+            if local_match_id is not None:
+                game["id"] = local_match_id
+        evaluate_finished_predictions()
     else:
         # Fallback para o banco de dados local caso a API retorne vazia ou com erro
         df_2026 = load_2026_matches()
@@ -804,6 +810,8 @@ else:
 # Carregar dados históricos atualizados
 df_matches = load_historical_matches()
 df_teams = load_all_teams()
+df_prediction_evaluations = load_prediction_evaluations()
+model_calibration = build_model_calibration(df_matches, df_prediction_evaluations)
 team_elo_map = {row["nome"]: row["elo_rating"] for _, row in df_teams.iterrows()}
 team_sigla_map = {row["nome"]: row["sigla"] for _, row in df_teams.iterrows()}
 
@@ -860,7 +868,7 @@ if jogos_live:
         unsafe_allow_html=True
     )
     for game in jogos_live:
-        render_match_card(game, df_matches, team_elo_map, team_sigla_map)
+        render_match_card(game, df_matches, team_elo_map, team_sigla_map, model_calibration)
 
 if jogos_scheduled:
     st.markdown(
@@ -869,7 +877,7 @@ if jogos_scheduled:
         unsafe_allow_html=True
     )
     for game in jogos_scheduled:
-        render_match_card(game, df_matches, team_elo_map, team_sigla_map)
+        render_match_card(game, df_matches, team_elo_map, team_sigla_map, model_calibration)
 
 if jogos_finished:
     st.markdown(
@@ -878,7 +886,7 @@ if jogos_finished:
         unsafe_allow_html=True
     )
     for game in jogos_finished:
-        render_match_card(game, df_matches, team_elo_map, team_sigla_map)
+        render_match_card(game, df_matches, team_elo_map, team_sigla_map, model_calibration)
 
 if jogos_unavailable:
     st.markdown(
@@ -887,4 +895,4 @@ if jogos_unavailable:
         unsafe_allow_html=True
     )
     for game in jogos_unavailable:
-        render_match_card(game, df_matches, team_elo_map, team_sigla_map)
+        render_match_card(game, df_matches, team_elo_map, team_sigla_map, model_calibration)
