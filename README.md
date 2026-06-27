@@ -47,6 +47,11 @@ streamlit run app.py
 
 The SQLite database is generated locally under `data/` on first run. Local `.db` files are intentionally ignored by Git.
 
+## Documentation
+
+- `docs/index.html` contains the project documentation in a static HTML format.
+- `docs/architecture-flow.mmd` contains the Mermaid architecture flowchart.
+
 ## Data Sources
 
 - OpenFootball (`openfootball/worldcup.json`) is used to refresh finished World Cup matches when the raw GitHub JSON is reachable.

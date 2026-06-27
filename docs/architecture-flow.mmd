@@ -1,0 +1,54 @@
+flowchart TD
+    User["Usuario no Streamlit"] --> App["app.py<br/>Home / jogos 2026"]
+    User --> Pages["pages/<br/>Estatisticas, Previsoes, Historico, Acuracia"]
+
+    Secrets["FOOTBALL_DATA_API_KEY<br/>env ou st.secrets"] --> ApiClient["src/api_client.py"]
+    ApiClient --> FootballData["Football-Data.org<br/>ao vivo e agenda futura"]
+    FootballData --> ApiSync["sync_api_match_to_db"]
+
+    OpenFootball["openfootball/worldcup.json<br/>jogos finalizados"] --> OpenSync["sync_openfootball_finished_matches"]
+
+    Seed["Fallback offline / seed<br/>dados locais"] --> InitDb["init_db"]
+    InitDb --> SQLite[("SQLite local<br/>data/futebot.db")]
+    ApiSync --> SQLite
+    OpenSync --> SQLite
+
+    SQLite --> Matches["load_historical_matches<br/>historico real"]
+    SQLite --> Matches2026["load_2026_matches<br/>agenda e jogos 2026"]
+    SQLite --> Teams["load_all_teams<br/>ELO e ranking"]
+
+    Matches --> Model["src/ML_models.py<br/>Poisson + ELO"]
+    Teams --> Model
+    Matches2026 --> Model
+
+    Model --> Predictions["Previsoes pre-jogo<br/>xG, 1X2, placar provavel"]
+    Predictions --> Snapshot["save_prediction_snapshot"]
+    Snapshot --> PredictionTable[("previsoes_partidas<br/>snapshots e metricas")]
+
+    SQLite --> Finished["Partidas FINISHED<br/>placar real"]
+    Finished --> Eval["evaluate_finished_predictions"]
+    PredictionTable --> Eval
+    Eval --> PredictionTable
+
+    PredictionTable --> Calibration["src/model_calibration.py<br/>ajustes conservadores"]
+    Calibration --> Model
+
+    Model --> LiveModel["simulate_match_in_play<br/>probabilidade ao vivo"]
+    Model --> Tournament["run_tournament_simulation<br/>simulacao de torneio"]
+    Model --> Accuracy["Backtest temporal<br/>sem vazamento"]
+
+    Predictions --> App
+    LiveModel --> App
+    Tournament --> Pages
+    Accuracy --> Pages
+    SQLite --> Pages
+
+    classDef source fill:#eff6ff,stroke:#2563eb,color:#1e3a8a;
+    classDef db fill:#fef3c7,stroke:#b45309,color:#78350f;
+    classDef model fill:#ede9fe,stroke:#6d28d9,color:#3b0764;
+    classDef ui fill:#d1fae5,stroke:#059669,color:#064e3b;
+
+    class FootballData,OpenFootball,Seed,Secrets source;
+    class SQLite,PredictionTable db;
+    class Model,Calibration,LiveModel,Tournament,Accuracy model;
+    class User,App,Pages ui;
