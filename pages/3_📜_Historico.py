@@ -4,7 +4,7 @@ import pandas as pd
 # Importações locais do projeto
 from src.database import init_db, load_historical_matches
 from src.styles import inject_css
-from src.utils import get_flag, get_flag_html, format_fase, format_fase_option
+from src.utils import get_flag_html, format_fase, format_fase_option
 
 # Configuração da página
 st.set_page_config(page_title="Histórico de Copas - FuteBot", page_icon="📜", layout="wide")
@@ -47,17 +47,37 @@ else:
     df_edicao["total_gols_partida"] = df_edicao["gols_mandante"] + df_edicao["gols_visitante"]
     maior_jogo = df_edicao.sort_values("total_gols_partida", ascending=False)
     
-    maior_placar_str = "N/A"
+    maior_placar_html = """
+    <div class="glass-card" style="height: 100%; min-height: 118px; margin-bottom: 0; padding: 14px 16px; text-align: center; display: flex; flex-direction: column; justify-content: center; gap: 8px;">
+        <div style="font-size: 13px; color: #64748b; font-weight: 700;">Partida com Mais Gols</div>
+        <div style="font-size: 15px; color: #94a3b8;">N/A</div>
+    </div>
+    """
     if not maior_jogo.empty:
         mj = maior_jogo.iloc[0]
-        maior_placar_str = f"{get_flag(mj['mandante_nome'])} {mj['mandante_nome']} {mj['gols_mandante']} x {mj['gols_visitante']} {mj['visitante_nome']} {get_flag(mj['visitante_nome'])}"
+        maior_placar_html = f"""
+        <div class="glass-card" style="height: 100%; min-height: 118px; margin-bottom: 0; padding: 14px 16px; text-align: center; display: flex; flex-direction: column; justify-content: center; gap: 8px;">
+            <div style="font-size: 13px; color: #64748b; font-weight: 700;">Partida com Mais Gols</div>
+            <div style="display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap; line-height: 1.25;">
+                <span style="display: inline-flex; align-items: center; gap: 6px; font-weight: 700; color: #1e293b; white-space: nowrap;">
+                    {get_flag_html(mj['mandante_nome'], width=24)} {mj['mandante_nome']}
+                </span>
+                <span style="background: rgba(37,99,235,0.08); border: 1px solid rgba(37,99,235,0.18); color: #2563eb; border-radius: 999px; padding: 4px 12px; font-size: 18px; font-weight: 800; white-space: nowrap;">
+                    {mj['gols_mandante']} x {mj['gols_visitante']}
+                </span>
+                <span style="display: inline-flex; align-items: center; gap: 6px; font-weight: 700; color: #1e293b; white-space: nowrap;">
+                    {get_flag_html(mj['visitante_nome'], width=24)} {mj['visitante_nome']}
+                </span>
+            </div>
+        </div>
+        """
         
     # Layout de métricas
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Total de Partidas", total_jogos)
     col2.metric("Total de Gols Marcados", total_gols)
     col3.metric("Média de Gols / Jogo", f"{media_gols:.2f}")
-    col4.metric("Partida com Mais Gols", maior_placar_str)
+    col4.markdown(maior_placar_html, unsafe_allow_html=True)
     
     st.markdown("---")
     
