@@ -13,6 +13,8 @@ htmlcov/
 data/*.db
 data/*.db-*
 
+scratch/
+
 .env
 .env.*
 !.env.example
