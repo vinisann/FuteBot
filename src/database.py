@@ -90,6 +90,7 @@ def init_db():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_partidas_origem ON partidas(origem_dados);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_previsoes_partida ON previsoes_partidas(partida_id);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_previsoes_evaluated ON previsoes_partidas(evaluated_at);")
+        _dedupe_group_matches(cursor)
         
         conn.commit()
     finally:
@@ -105,6 +106,51 @@ def _ensure_partidas_schema(cursor):
     if "origem_dados" not in columns:
         cursor.execute("ALTER TABLE partidas ADD COLUMN origem_dados TEXT NOT NULL DEFAULT 'manual'")
         cursor.execute("UPDATE partidas SET origem_dados = 'seed' WHERE ano_copa = 2026")
+
+def _dedupe_group_matches(cursor):
+    """Remove duplicatas de confrontos de grupo, preferindo fontes reais a seed."""
+    cursor.execute(
+        """
+        SELECT
+            ano_copa,
+            grupo,
+            MIN(mandante_id, visitante_id) AS team_a,
+            MAX(mandante_id, visitante_id) AS team_b,
+            COUNT(*) AS total
+        FROM partidas
+        WHERE grupo IS NOT NULL AND grupo != ''
+        GROUP BY ano_copa, grupo, team_a, team_b
+        HAVING COUNT(*) > 1
+        """
+    )
+    duplicate_groups = cursor.fetchall()
+
+    source_priority = {
+        "api": 0,
+        "openfootball": 1,
+        "manual": 2,
+        "seed": 3,
+    }
+
+    for group in duplicate_groups:
+        cursor.execute(
+            """
+            SELECT id, origem_dados
+            FROM partidas
+            WHERE ano_copa = ?
+              AND grupo = ?
+              AND MIN(mandante_id, visitante_id) = ?
+              AND MAX(mandante_id, visitante_id) = ?
+            """,
+            (group[0], group[1], group[2], group[3]),
+        )
+        rows = cursor.fetchall()
+        rows = sorted(
+            rows,
+            key=lambda row: (source_priority.get(row[1], 4), row[0]),
+        )
+        for duplicate in rows[1:]:
+            cursor.execute("DELETE FROM partidas WHERE id = ?", (duplicate[0],))
 
 TRANSLATE_TEAM_NAME = {
     "Argentina": "Argentina",
@@ -1057,18 +1103,34 @@ def sync_openfootball_finished_matches(ano=2026):
                 vencedor_id,
             ) = partida
 
-            cursor.execute(
-                """
-                SELECT id, mandante_id
-                FROM partidas
-                WHERE ano_copa = ? AND fase = ? AND (
-                    (mandante_id = ? AND visitante_id = ?) OR
-                    (mandante_id = ? AND visitante_id = ?)
+            if grupo:
+                cursor.execute(
+                    """
+                    SELECT id, mandante_id
+                    FROM partidas
+                    WHERE ano_copa = ? AND grupo = ? AND (
+                        (mandante_id = ? AND visitante_id = ?) OR
+                        (mandante_id = ? AND visitante_id = ?)
+                    )
+                    ORDER BY CASE origem_dados WHEN 'seed' THEN 0 ELSE 1 END, id
+                    """,
+                    (ano_copa, grupo, mandante_id, visitante_id, visitante_id, mandante_id),
                 )
-                """,
-                (ano_copa, fase, mandante_id, visitante_id, visitante_id, mandante_id),
-            )
-            match_row = cursor.fetchone()
+            else:
+                cursor.execute(
+                    """
+                    SELECT id, mandante_id
+                    FROM partidas
+                    WHERE ano_copa = ? AND fase = ? AND (
+                        (mandante_id = ? AND visitante_id = ?) OR
+                        (mandante_id = ? AND visitante_id = ?)
+                    )
+                    ORDER BY CASE origem_dados WHEN 'seed' THEN 0 ELSE 1 END, id
+                    """,
+                    (ano_copa, fase, mandante_id, visitante_id, visitante_id, mandante_id),
+                )
+            match_rows = cursor.fetchall()
+            match_row = match_rows[0] if match_rows else None
 
             if match_row:
                 cursor.execute(
@@ -1092,6 +1154,12 @@ def sync_openfootball_finished_matches(ano=2026):
                         match_row["id"],
                     ),
                 )
+                duplicate_ids = [row["id"] for row in match_rows[1:]]
+                if duplicate_ids:
+                    cursor.executemany(
+                        "DELETE FROM partidas WHERE id = ?",
+                        [(duplicate_id,) for duplicate_id in duplicate_ids],
+                    )
             else:
                 cursor.execute(
                     """

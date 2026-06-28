@@ -162,3 +162,90 @@ def test_openfootball_sync_marks_finished_matches_as_openfootball(tmp_path, monk
     assert status == "ok"
     assert not synced.empty
     assert synced.iloc[0]["origem_dados"] == "openfootball"
+
+
+def test_openfootball_sync_does_not_duplicate_group_match_when_phase_differs(tmp_path, monkeypatch):
+    database = importlib.import_module("src.database")
+    monkeypatch.setattr(database, "DB_DIR", str(tmp_path))
+    monkeypatch.setattr(database, "DB_PATH", str(tmp_path / "futebot.db"))
+
+    def fake_loader(ano, team_to_id, finished_only=True):
+        return [
+            (
+                ano,
+                "2026-06-18 15:00",
+                team_to_id["Canadá"],
+                team_to_id["Catar"],
+                6,
+                0,
+                "1",
+                "B",
+                "FINISHED",
+                team_to_id["Canadá"],
+            )
+        ]
+
+    monkeypatch.setattr(database, "load_openfootball_data", fake_loader)
+    database.init_db()
+
+    updated, status = database.sync_openfootball_finished_matches(2026)
+    df = database.load_historical_matches(include_seed_2026=True)
+    canada_qatar = df[
+        (df["ano_copa"] == 2026)
+        & (
+            ((df["mandante_nome"] == "Canadá") & (df["visitante_nome"] == "Catar"))
+            | ((df["mandante_nome"] == "Catar") & (df["visitante_nome"] == "Canadá"))
+        )
+    ]
+
+    assert updated == 1
+    assert status == "ok"
+    assert len(canada_qatar) == 1
+    assert canada_qatar.iloc[0]["origem_dados"] == "openfootball"
+
+
+def test_init_db_removes_existing_seed_duplicate_group_matches(tmp_path, monkeypatch):
+    database = importlib.import_module("src.database")
+    monkeypatch.setattr(database, "DB_DIR", str(tmp_path))
+    monkeypatch.setattr(database, "DB_PATH", str(tmp_path / "futebot.db"))
+    database.init_db()
+
+    ids = {}
+    conn = database.get_connection()
+    try:
+        rows = conn.execute("SELECT nome, id FROM selecoes WHERE nome IN ('Canadá', 'Catar')").fetchall()
+        ids = {row["nome"]: row["id"] for row in rows}
+        conn.execute(
+            """
+            INSERT INTO partidas
+            (ano_copa, data_hora, mandante_id, visitante_id, gols_mandante, gols_visitante,
+             fase, grupo, status, vencedor_id, origem_dados)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'openfootball')
+            """,
+            (
+                2026,
+                "2026-06-18 15:00",
+                ids["Canadá"],
+                ids["Catar"],
+                6,
+                0,
+                "1",
+                "B",
+                "FINISHED",
+                ids["Canadá"],
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    database.init_db()
+    df = database.load_historical_matches(include_seed_2026=True)
+    canada_qatar = df[
+        (df["ano_copa"] == 2026)
+        & (df["mandante_nome"] == "Canadá")
+        & (df["visitante_nome"] == "Catar")
+    ]
+
+    assert len(canada_qatar) == 1
+    assert canada_qatar.iloc[0]["origem_dados"] == "openfootball"
