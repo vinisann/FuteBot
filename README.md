@@ -31,6 +31,30 @@ O projeto foi pensado para funcionar tanto online quanto offline: quando há con
 - Requests
 - Pytest
 
+## Imagens do projeto:
+
+Home:
+(Página inicial da aplicação)
+<img width="1907" height="966" alt="image" src="https://github.com/user-attachments/assets/12592f0d-e592-48a0-a873-b492f790bd22" />
+
+Estatísticas:
+(Onde contêm mais detalhamentos voltado a parte estatística do projeto
+<img width="1917" height="956" alt="image" src="https://github.com/user-attachments/assets/594ab8e5-0bb4-4b1b-840e-cafae2326d68" />
+(Detalhamento da parte de estatísticas):
+<img width="1412" height="662" alt="image" src="https://github.com/user-attachments/assets/ec61a082-9419-44fd-8265-4df0e892cd8c" />
+
+Previsões:
+(Nessa parte você consegue simular um confronto entre duas equipes de sua escolha)
+<img width="1842" height="908" alt="image" src="https://github.com/user-attachments/assets/9da33cca-1302-4c8e-bb7b-6599083ff33f" />
+
+Histórico:
+(Detalhamento dos jogos históricos com dados atualizados de 2026 + histórico até 2018)
+<img width="1912" height="957" alt="image" src="https://github.com/user-attachments/assets/c46770e3-d96e-4eb3-a656-d3a1c1c00199" />
+
+Acurácia:
+(Faz um comparativo entre previsões x jogos finalizados e se auto calibra para próximo confronto)
+<img width="1918" height="952" alt="image" src="https://github.com/user-attachments/assets/6d8518aa-28f9-4dc0-8c85-2c433dd01e8b" />
+
 ## Como rodar localmente
 
 Crie e ative um ambiente virtual:
@@ -171,20 +195,6 @@ Os testes cobrem pontos como:
 - status especiais da API;
 - calibração incremental.
 
-## Deploy no Streamlit Community Cloud
-
-Para publicar:
-
-1. Suba o repositório para o GitHub.
-2. Acesse [Streamlit Community Cloud](https://share.streamlit.io/).
-3. Crie um app apontando para:
-   - repositório: `vinisann/FuteBot`;
-   - branch: `main`;
-   - arquivo principal: `app.py`.
-4. Configure o secret `FOOTBALL_DATA_API_KEY` nas configurações do app, se quiser usar a API.
-
-O app também funciona sem token, usando o modo offline/local.
-
 ## Segurança e versionamento
 
 Arquivos sensíveis e locais ficam fora do Git:
@@ -197,21 +207,6 @@ Arquivos sensíveis e locais ficam fora do Git:
 
 O banco SQLite é recriado localmente no primeiro uso, então o repositório pode ser clonado e executado sem versionar dados locais.
 
-## Limitações conhecidas
-
-- O SQLite local não deve ser tratado como banco permanente em deploy público.
-- Em ambientes como Streamlit Cloud, o banco pode ser recriado após reinícios ou redeploys.
-- A camada de tempo real depende da disponibilidade e limites do Football-Data.org.
-- A calibração incremental melhora com o acúmulo de previsões avaliadas, mas começa neutra quando ainda há pouca amostra.
-
-## Roadmap possível
-
-- Persistência externa com Postgres, Supabase ou Neon.
-- Dashboard específico para calibração do modelo.
-- Comparação visual entre modelo base e modelo calibrado.
-- Exportação de relatórios de acurácia.
-- Melhorias de responsividade mobile.
-
 ## Licença
 
-Este projeto ainda não define uma licença explícita. Antes de uso público amplo, adicione uma licença adequada ao objetivo do repositório.
+MIT
