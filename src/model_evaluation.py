@@ -10,6 +10,7 @@ from src.dynamic_elo import (
     get_pre_match_elo,
 )
 from src.ML_models import predict_match_probabilities
+from src.dixon_coles import estimate_dixon_coles_rho
 from src.model_calibration import build_model_calibration
 
 
@@ -113,6 +114,9 @@ def _variant_result(model_name, row, prediction):
         "fator_forma_visitante": prediction.get("fator_forma_visitante", 1.0),
         "modelo_calibrado": prediction.get("modelo_calibrado", False),
         "modelo_com_forma": prediction.get("modelo_com_forma", False),
+        "modelo_dixon_coles": prediction.get("modelo_dixon_coles", False),
+        "rho_dixon_coles": prediction.get("rho_dixon_coles", 0.0),
+        "ajuste_placares_baixos": prediction.get("ajuste_placares_baixos", False),
     }
 
 
@@ -145,6 +149,7 @@ def evaluate_model_variants(df_matches, df_teams, df_predictions=None):
             row["data_hora"],
             target_match_id=row.get("id"),
         )
+        dixon_coles_rho = estimate_dixon_coles_rho(history)
 
         variants = [
             (
@@ -173,6 +178,20 @@ def evaluate_model_variants(df_matches, df_teams, df_predictions=None):
                     calibration=calibration,
                     dynamic_elo=(dynamic_m_elo, dynamic_v_elo),
                     recent_form=recent_form,
+                ),
+            ),
+            (
+                "ELO dinâmico + forma/calibração + Dixon-Coles",
+                predict_match_probabilities(
+                    m_name,
+                    v_name,
+                    dynamic_m_elo,
+                    dynamic_v_elo,
+                    history,
+                    calibration=calibration,
+                    dynamic_elo=(dynamic_m_elo, dynamic_v_elo),
+                    recent_form=recent_form,
+                    score_correction={"method": "dixon_coles", "rho": dixon_coles_rho},
                 ),
             ),
         ]
