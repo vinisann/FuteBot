@@ -9,8 +9,9 @@ import html
 sys.path.append(os.path.abspath('.'))
 
 from src.accuracy import build_prediction_history
-from src.database import get_connection, init_db, load_historical_matches, sync_openfootball_finished_matches, evaluate_finished_predictions, load_prediction_evaluations
+from src.database import get_connection, init_db, load_historical_matches, load_all_teams, sync_openfootball_finished_matches, evaluate_finished_predictions, load_prediction_evaluations
 from src.ML_models import predict_match_probabilities
+from src.model_evaluation import evaluate_model_variants, build_calibration_buckets
 from src.styles import inject_css
 from src.utils import get_flag_html, get_flag, format_fase
 
@@ -139,6 +140,14 @@ def get_retroactive_predictions():
         })
     return pd.DataFrame(predictions)
 
+@st.cache_data
+def get_model_variant_backtest():
+    df_matches = load_historical_matches(include_seed_2026=False)
+    df_teams = load_all_teams()
+    df_predictions = load_prediction_evaluations()
+    return evaluate_model_variants(df_matches, df_teams, df_predictions)
+
+
 # Título / Hero Banner
 st.markdown(clean_html("""
 <div class="hero-banner" style="background: linear-gradient(135deg, #1e1b4b 0%, #1e3a8a 50%, #581c87 100%);">
@@ -163,6 +172,7 @@ st.markdown(clean_html("""
 # Buscar todas as previsões da base
 df_pred = get_retroactive_predictions()
 df_calibrated_eval = load_prediction_evaluations()
+df_variant_backtest = get_model_variant_backtest()
 if not df_calibrated_eval.empty:
     df_calibrated_eval = df_calibrated_eval.dropna(subset=["evaluated_at"]).copy()
 
@@ -200,6 +210,16 @@ if not df_calibrated_filtered.empty:
         df_calibrated_filtered = df_calibrated_filtered[
             (df_calibrated_filtered["mandante_nome"] == selected_team)
             | (df_calibrated_filtered["visitante_nome"] == selected_team)
+        ]
+
+df_variant_filtered = df_variant_backtest.copy()
+if not df_variant_filtered.empty:
+    if year_filter != "Todas":
+        df_variant_filtered = df_variant_filtered[df_variant_filtered["ano_copa"] == int(year_filter)]
+    if selected_team != "Todas":
+        df_variant_filtered = df_variant_filtered[
+            (df_variant_filtered["mandante_nome"] == selected_team)
+            | (df_variant_filtered["visitante_nome"] == selected_team)
         ]
 
 # Métricas Calculadas
@@ -288,6 +308,87 @@ else:
     with col_sample:
         st.metric("Previsões avaliadas", cal_total)
         st.caption(f"Brier Score médio: {cal_brier:.3f}")
+
+st.markdown("### Backtesting avancado: ELO dinamico e forma recente")
+if df_variant_filtered.empty:
+    st.info(
+        "Ainda nao ha amostra suficiente para comparar as variantes do modelo com os filtros atuais."
+    )
+else:
+    summary = df_variant_filtered.groupby("modelo").agg(
+        jogos=("partida_id", "count"),
+        acuracia_1x2=("is_outcome_correct", "mean"),
+        placar_exato=("is_score_correct", "mean"),
+        erro_gols=("goal_error", "mean"),
+        brier_score=("brier_score", "mean"),
+        log_loss=("log_loss", "mean"),
+    ).reset_index()
+    summary["Acuracia 1X2"] = (summary["acuracia_1x2"] * 100).round(1)
+    summary["Placar exato"] = (summary["placar_exato"] * 100).round(1)
+    summary["Erro medio gols"] = summary["erro_gols"].round(2)
+    summary["Brier Score"] = summary["brier_score"].round(3)
+    summary["Log Loss"] = summary["log_loss"].round(3)
+
+    st.dataframe(
+        summary[
+            [
+                "modelo",
+                "jogos",
+                "Acuracia 1X2",
+                "Placar exato",
+                "Erro medio gols",
+                "Brier Score",
+                "Log Loss",
+            ]
+        ],
+        hide_index=True,
+        use_container_width=True,
+    )
+
+    if int(summary["jogos"].max()) < 10:
+        st.warning(
+            "A amostra ainda e pequena. Use estes numeros como sinal inicial, nao como conclusao estatistica definitiva."
+        )
+
+    best_row = summary.sort_values(["brier_score", "log_loss"]).iloc[0]
+    st.caption(
+        f"Melhor calibracao probabilistica no filtro atual: {best_row['modelo']} "
+        f"(Brier {best_row['Brier Score']:.3f}, Log Loss {best_row['Log Loss']:.3f}). "
+        "O modelo avancado muda as chances quando o ELO pre-jogo temporal, a forma recente ou a calibracao local indicam diferenca real."
+    )
+
+    chart_data = df_variant_filtered.copy()
+    chart_data["data"] = pd.to_datetime(chart_data["data_hora"], errors="coerce").dt.date
+    chart_data = chart_data.dropna(subset=["data"])
+    if not chart_data.empty:
+        evolution = chart_data.groupby(["data", "modelo"])["is_outcome_correct"].mean().reset_index()
+        evolution["Acuracia 1X2"] = evolution["is_outcome_correct"] * 100
+        st.line_chart(
+            evolution.pivot(index="data", columns="modelo", values="Acuracia 1X2"),
+            use_container_width=True,
+        )
+
+    preferred = df_variant_filtered[
+        df_variant_filtered["modelo"] == "ELO dinâmico + forma/calibração"
+    ]
+    buckets = build_calibration_buckets(preferred)
+    if not buckets.empty:
+        st.markdown("#### Curva de calibracao por confianca")
+        buckets_display = buckets.copy()
+        buckets_display["confianca_media"] = (buckets_display["confianca_media"] * 100).round(1)
+        buckets_display["acuracia"] = (buckets_display["acuracia"] * 100).round(1)
+        st.dataframe(
+            buckets_display.rename(
+                columns={
+                    "faixa_confianca": "Faixa de confianca",
+                    "previsoes": "Previsoes",
+                    "confianca_media": "Confianca media (%)",
+                    "acuracia": "Acuracia real (%)",
+                }
+            ),
+            hide_index=True,
+            use_container_width=True,
+        )
 
 # Tabela detalhada
 st.markdown("### 📋 Log Completo de Previsões vs Realidade")
