@@ -108,13 +108,32 @@ def simulate_penalty_shootout(elo_diff):
             
     return goals_m, goals_v
 
-def predict_match_probabilities(mandante_nome, visitante_nome, mandante_elo, visitante_elo, df_matches, max_gols=7, calibration=None):
+def predict_match_probabilities(
+    mandante_nome,
+    visitante_nome,
+    mandante_elo,
+    visitante_elo,
+    df_matches,
+    max_gols=7,
+    calibration=None,
+    dynamic_elo=None,
+    recent_form=None,
+):
     """
     Calcula as probabilidades de resultado de uma partida (Vitória Mandante, Empate, Vitória Visitante)
     e gera a matriz de probabilidade de placares exatos usando a distribuição de Poisson e ELO.
     """
     # Coercions de segurança
     max_gols = max(1, int(max_gols))
+    if dynamic_elo is not None:
+        try:
+            dyn_m, dyn_v = dynamic_elo
+            if dyn_m is not None and dyn_v is not None:
+                mandante_elo = dyn_m
+                visitante_elo = dyn_v
+        except (ValueError, TypeError):
+            pass
+
     try:
         mandante_elo = float(mandante_elo) if mandante_elo is not None else 1850.0
     except (ValueError, TypeError):
@@ -147,6 +166,23 @@ def predict_match_probabilities(mandante_nome, visitante_nome, mandante_elo, vis
     
     lambda_m = lambda_m * np.sqrt(elo_adjustment)
     lambda_v = lambda_v / np.sqrt(elo_adjustment)
+
+    form_m = 1.0
+    form_v = 1.0
+    if recent_form:
+        try:
+            form_m = float(recent_form.get("mandante_factor", 1.0))
+        except (ValueError, TypeError, AttributeError):
+            form_m = 1.0
+        try:
+            form_v = float(recent_form.get("visitante_factor", 1.0))
+        except (ValueError, TypeError, AttributeError):
+            form_v = 1.0
+        form_m = float(np.clip(form_m, 0.90, 1.10))
+        form_v = float(np.clip(form_v, 0.90, 1.10))
+        lambda_m *= form_m
+        lambda_v *= form_v
+
     lambda_m, lambda_v, calibration_meta = apply_calibration_to_lambdas(
         lambda_m, lambda_v, mandante_nome, visitante_nome, calibration
     )
@@ -213,6 +249,11 @@ def predict_match_probabilities(mandante_nome, visitante_nome, mandante_elo, vis
         "placar_mais_provavel": placar_mais_provavel,
         "matriz_placar": matriz_placar.tolist(), # Convertido para lista JSON serializeable
         "gols_range": list(range(max_gols + 1)),
+        "elo_mandante_usado": float(mandante_elo),
+        "elo_visitante_usado": float(visitante_elo),
+        "fator_forma_mandante": float(form_m),
+        "fator_forma_visitante": float(form_v),
+        "modelo_com_forma": bool(recent_form),
         **calibration_meta,
     }
 
