@@ -3,6 +3,7 @@ import pandas as pd
 import random
 from scipy.stats import poisson
 from src.model_calibration import apply_calibration_to_lambdas
+from src.dixon_coles import apply_dixon_coles_correction
 
 def calculate_team_strengths(df_matches):
     """
@@ -118,6 +119,7 @@ def predict_match_probabilities(
     calibration=None,
     dynamic_elo=None,
     recent_form=None,
+    score_correction=None,
 ):
     """
     Calcula as probabilidades de resultado de uma partida (Vitória Mandante, Empate, Vitória Visitante)
@@ -201,6 +203,18 @@ def predict_match_probabilities(
     
     # Normalizar a matriz para que a soma seja 1.0
     matriz_placar = matriz_placar / matriz_placar.sum()
+    score_correction_meta = {
+        "modelo_dixon_coles": False,
+        "rho_dixon_coles": 0.0,
+        "ajuste_placares_baixos": False,
+    }
+    if score_correction and score_correction.get("method") == "dixon_coles":
+        matriz_placar, score_correction_meta = apply_dixon_coles_correction(
+            matriz_placar,
+            lambda_m,
+            lambda_v,
+            score_correction.get("rho", -0.08),
+        )
     
     # 5. Agregar probabilidades de resultado
     prob_vitoria_m = 0.0
@@ -254,6 +268,7 @@ def predict_match_probabilities(
         "fator_forma_mandante": float(form_m),
         "fator_forma_visitante": float(form_v),
         "modelo_com_forma": bool(recent_form),
+        **score_correction_meta,
         **calibration_meta,
     }
 

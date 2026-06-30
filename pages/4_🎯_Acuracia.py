@@ -309,7 +309,7 @@ else:
         st.metric("Previsões avaliadas", cal_total)
         st.caption(f"Brier Score médio: {cal_brier:.3f}")
 
-st.markdown("### Backtesting avancado: ELO dinamico e forma recente")
+st.markdown("### Backtesting avancado: ELO dinamico, forma recente e Dixon-Coles")
 if df_variant_filtered.empty:
     st.info(
         "Ainda nao ha amostra suficiente para comparar as variantes do modelo com os filtros atuais."
@@ -369,7 +369,7 @@ else:
         )
 
     preferred = df_variant_filtered[
-        df_variant_filtered["modelo"] == "ELO dinâmico + forma/calibração"
+        df_variant_filtered["modelo"] == "ELO dinâmico + forma/calibração + Dixon-Coles"
     ]
     buckets = build_calibration_buckets(preferred)
     if not buckets.empty:
