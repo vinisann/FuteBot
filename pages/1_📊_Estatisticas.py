@@ -8,6 +8,7 @@ from src.config import get_api_key
 from src.database import init_db, load_historical_matches, load_all_teams, load_2026_matches, sync_openfootball_finished_matches, evaluate_finished_predictions, load_prediction_evaluations
 from src.ML_models import calculate_team_strengths, run_tournament_simulation, simulate_single_bracket, predict_match_probabilities
 from src.model_calibration import build_model_calibration
+from src.market_benchmark import compare_model_to_market
 from src.styles import inject_css
 from src.statistics import build_team_stats
 from src.utils import get_flag, format_fase, TEAM_FLAGS, get_flag_html, get_player_photo_url
@@ -1449,6 +1450,39 @@ else:
                             f"{next_match['visitante_nome']}": f"{vals['visitante']:.2f}"
                         })
                     st.dataframe(pd.DataFrame(odds_rows), hide_index=True, use_container_width=True)
+
+                    benchmark = compare_model_to_market(
+                        {
+                            "mandante": pred["prob_vitoria_mandante"],
+                            "empate": pred["prob_empate"],
+                            "visitante": pred["prob_vitoria_visitante"],
+                        },
+                        odds_data["houses"],
+                    )
+                    class_label = {
+                        "alinhado": "Alinhado",
+                        "monitorar": "Monitorar",
+                        "divergencia_alta": "Divergencia alta",
+                    }.get(benchmark["classificacao"], "Monitorar")
+                    delta_rows = []
+                    for key, label in [
+                        ("mandante", next_match["mandante_nome"]),
+                        ("empate", "Empate"),
+                        ("visitante", next_match["visitante_nome"]),
+                    ]:
+                        delta_rows.append(
+                            {
+                                "Resultado": label,
+                                "Modelo (%)": round(benchmark["modelo"][key] * 100, 1),
+                                "Mercado/proxy (%)": round(benchmark["mercado"][key] * 100, 1),
+                                "Diferenca (p.p.)": round(benchmark["diferencas_pp"][key], 1),
+                            }
+                        )
+                    st.markdown("##### Benchmark modelo vs odds")
+                    st.caption(
+                        f"{class_label}: {benchmark['resumo']} Odds entram apenas como referencia comparativa, nao como treino."
+                    )
+                    st.dataframe(pd.DataFrame(delta_rows), hide_index=True, use_container_width=True)
 
                     # Placar mais provável
                     pmp = pred["placar_mais_provavel"]

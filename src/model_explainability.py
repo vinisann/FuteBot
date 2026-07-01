@@ -138,6 +138,17 @@ def explain_prediction(prediction):
     elif prediction.get("motivos_sinais_externos"):
         alertas.append("Sinais externos neutros ou sem evidencias suficientes.")
 
+    market_benchmark = prediction.get("market_benchmark")
+    if market_benchmark:
+        fatores.append(
+            _factor(
+                "odds_benchmark",
+                "Benchmark de odds",
+                str(market_benchmark.get("resumo", "Odds usadas apenas como referencia comparativa.")),
+                "alerta" if market_benchmark.get("classificacao") == "divergencia_alta" else "neutro",
+            )
+        )
+
     fator_zebra = float(prediction.get("fator_zebra", 0.0) or 0.0)
     if fator_zebra > 0:
         fatores.append(
