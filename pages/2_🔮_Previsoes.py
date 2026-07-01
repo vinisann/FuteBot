@@ -10,6 +10,7 @@ import textwrap
 from src.database import init_db, load_historical_matches, load_all_teams, load_prediction_evaluations
 from src.ML_models import predict_match_probabilities
 from src.model_calibration import build_model_calibration
+from src.model_explainability import explain_prediction, format_explanation_markdown
 from src.styles import inject_css
 from src.utils import get_flag, get_flag_html
 
@@ -61,6 +62,7 @@ else:
         pred = predict_match_probabilities(
             mandante_nome, visitante_nome, m_elo, v_elo, df_matches, calibration=model_calibration
         )
+        explanation = explain_prediction(pred)
         
         p_mandante = pred["prob_vitoria_mandante"] * 100
         p_empate = pred["prob_empate"] * 100
@@ -178,6 +180,8 @@ else:
                 <p style="text-align:center; margin: 0; color: #475569; font-family: 'Outfit', sans-serif; font-size: 14px;">Probabilidade de ocorrência exata: <strong>{placar_prov[2]*100:.1f}%</strong></p>
             </div>
             """), unsafe_allow_html=True)
+
+        st.markdown(format_explanation_markdown(explanation))
 
             
         # Matriz de Probabilidade de Placares (Heatmap)

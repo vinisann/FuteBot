@@ -12,6 +12,7 @@ from src.accuracy import build_prediction_history
 from src.database import get_connection, init_db, load_historical_matches, load_all_teams, sync_openfootball_finished_matches, evaluate_finished_predictions, load_prediction_evaluations
 from src.ML_models import predict_match_probabilities
 from src.model_evaluation import evaluate_model_variants, build_calibration_buckets
+from src.model_explainability import explain_prediction, format_explanation_markdown
 from src.styles import inject_css
 from src.utils import get_flag_html, get_flag, format_fase
 
@@ -371,6 +372,10 @@ else:
     preferred = df_variant_filtered[
         df_variant_filtered["modelo"] == "Ensemble ponderado"
     ]
+    if not preferred.empty:
+        latest_ensemble = preferred.sort_values("data_hora").iloc[-1].to_dict()
+        st.markdown(format_explanation_markdown(explain_prediction(latest_ensemble)))
+
     buckets = build_calibration_buckets(preferred)
     if not buckets.empty:
         st.markdown("#### Curva de calibracao por confianca")
