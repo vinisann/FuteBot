@@ -122,6 +122,22 @@ def explain_prediction(prediction):
     else:
         alertas.append("Contexto neutro ou sem dados contextuais confiaveis.")
 
+    if prediction.get("sinais_externos_usados"):
+        ajuste_m = float(prediction.get("ajuste_externo_mandante", 1.0))
+        ajuste_v = float(prediction.get("ajuste_externo_visitante", 1.0))
+        motivos = prediction.get("motivos_sinais_externos", [])
+        motivos_texto = " ".join(str(motivo) for motivo in motivos[:3])
+        fatores.append(
+            _factor(
+                "sinais_externos",
+                "Noticias e escalacoes",
+                f"Ajustes externos: {mandante} {ajuste_m:.2f}x, {visitante} {ajuste_v:.2f}x. {motivos_texto}",
+                "positivo" if ajuste_m > ajuste_v else "negativo" if ajuste_m < ajuste_v else "neutro",
+            )
+        )
+    elif prediction.get("motivos_sinais_externos"):
+        alertas.append("Sinais externos neutros ou sem evidencias suficientes.")
+
     fator_zebra = float(prediction.get("fator_zebra", 0.0) or 0.0)
     if fator_zebra > 0:
         fatores.append(

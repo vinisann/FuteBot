@@ -5,6 +5,7 @@ from scipy.stats import poisson
 from src.model_calibration import apply_calibration_to_lambdas
 from src.dixon_coles import apply_dixon_coles_correction, estimate_dixon_coles_rho
 from src.dynamic_elo import calculate_recent_form
+from src.external_signals import apply_external_signal_adjustment
 
 def calculate_team_strengths(df_matches):
     """
@@ -122,6 +123,7 @@ def predict_match_probabilities(
     recent_form=None,
     score_correction=None,
     match_context=None,
+    external_signals=None,
 ):
     """
     Calcula as probabilidades de resultado de uma partida (Vitória Mandante, Empate, Vitória Visitante)
@@ -226,6 +228,9 @@ def predict_match_probabilities(
     lambda_m, lambda_v, calibration_meta = apply_calibration_to_lambdas(
         lambda_m, lambda_v, mandante_nome, visitante_nome, calibration
     )
+    lambda_m, lambda_v, external_meta = apply_external_signal_adjustment(
+        lambda_m, lambda_v, mandante_nome, visitante_nome, external_signals
+    )
     
     # Evitar lambdas zerados para não quebrar a distribuição de Poisson
     lambda_m = max(lambda_m, 0.1)
@@ -309,6 +314,7 @@ def predict_match_probabilities(
         **context_meta,
         **score_correction_meta,
         **calibration_meta,
+        **external_meta,
     }
 
 def simulate_match_in_play(prob_pre_jogo, tempo_atual, gols_m_atual, gols_v_atual, max_gols=7):
