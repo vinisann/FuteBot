@@ -13,6 +13,7 @@ from src.ML_models import predict_match_probabilities
 from src.dixon_coles import estimate_dixon_coles_rho
 from src.match_context import build_match_context
 from src.model_calibration import build_model_calibration
+from src.model_ensemble import calculate_ensemble_weights, combine_predictions
 
 
 OUTCOME_LABELS = ("M", "E", "V")
@@ -119,6 +120,8 @@ def _variant_result(model_name, row, prediction):
         "rho_dixon_coles": prediction.get("rho_dixon_coles", 0.0),
         "ajuste_placares_baixos": prediction.get("ajuste_placares_baixos", False),
         "modelo_com_contexto": prediction.get("modelo_com_contexto", False),
+        "modelo_ensemble": prediction.get("modelo_ensemble", False),
+        "pesos_ensemble": prediction.get("pesos_ensemble"),
         "fator_contexto_mandante": prediction.get("fator_contexto_mandante", 1.0),
         "fator_contexto_visitante": prediction.get("fator_contexto_visitante", 1.0),
         "fator_descanso_mandante": prediction.get("fator_descanso_mandante", 1.0),
@@ -220,6 +223,18 @@ def evaluate_model_variants(df_matches, df_teams, df_predictions=None):
                 ),
             ),
         ]
+
+        predictions_by_model = {model_name: prediction for model_name, prediction in variants}
+        prior_results = pd.DataFrame(rows)
+        weights = calculate_ensemble_weights(prior_results)
+        if not weights:
+            weights = {model_name: 1.0 / len(predictions_by_model) for model_name in predictions_by_model}
+        variants.append(
+            (
+                "Ensemble ponderado",
+                combine_predictions(predictions_by_model, weights),
+            )
+        )
 
         for model_name, prediction in variants:
             rows.append(_variant_result(model_name, row, prediction))

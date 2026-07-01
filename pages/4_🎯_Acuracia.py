@@ -354,7 +354,7 @@ else:
     st.caption(
         f"Melhor calibracao probabilistica no filtro atual: {best_row['modelo']} "
         f"(Brier {best_row['Brier Score']:.3f}, Log Loss {best_row['Log Loss']:.3f}). "
-        "O modelo avancado muda as chances quando o ELO pre-jogo temporal, a forma recente, a calibracao local ou o contexto do jogo indicam diferenca real."
+        "O ensemble ponderado combina as variantes por desempenho historico, mantendo o modelo base como ancora quando a amostra ainda e pequena."
     )
 
     chart_data = df_variant_filtered.copy()
@@ -369,7 +369,7 @@ else:
         )
 
     preferred = df_variant_filtered[
-        df_variant_filtered["modelo"] == "ELO dinâmico + forma/calibração + Dixon-Coles + contexto"
+        df_variant_filtered["modelo"] == "Ensemble ponderado"
     ]
     buckets = build_calibration_buckets(preferred)
     if not buckets.empty:
