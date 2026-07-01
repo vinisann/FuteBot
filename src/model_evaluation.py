@@ -11,6 +11,7 @@ from src.dynamic_elo import (
 )
 from src.ML_models import predict_match_probabilities
 from src.dixon_coles import estimate_dixon_coles_rho
+from src.match_context import build_match_context
 from src.model_calibration import build_model_calibration
 
 
@@ -117,6 +118,14 @@ def _variant_result(model_name, row, prediction):
         "modelo_dixon_coles": prediction.get("modelo_dixon_coles", False),
         "rho_dixon_coles": prediction.get("rho_dixon_coles", 0.0),
         "ajuste_placares_baixos": prediction.get("ajuste_placares_baixos", False),
+        "modelo_com_contexto": prediction.get("modelo_com_contexto", False),
+        "fator_contexto_mandante": prediction.get("fator_contexto_mandante", 1.0),
+        "fator_contexto_visitante": prediction.get("fator_contexto_visitante", 1.0),
+        "fator_descanso_mandante": prediction.get("fator_descanso_mandante", 1.0),
+        "fator_descanso_visitante": prediction.get("fator_descanso_visitante", 1.0),
+        "fator_clima": prediction.get("fator_clima", 1.0),
+        "fator_fase": prediction.get("fator_fase", 1.0),
+        "contexto_resumo": prediction.get("contexto_resumo", "Contexto neutro"),
     }
 
 
@@ -150,6 +159,7 @@ def evaluate_model_variants(df_matches, df_teams, df_predictions=None):
             target_match_id=row.get("id"),
         )
         dixon_coles_rho = estimate_dixon_coles_rho(history)
+        match_context = build_match_context(history, row.to_dict())
 
         variants = [
             (
@@ -192,6 +202,21 @@ def evaluate_model_variants(df_matches, df_teams, df_predictions=None):
                     dynamic_elo=(dynamic_m_elo, dynamic_v_elo),
                     recent_form=recent_form,
                     score_correction={"method": "dixon_coles", "rho": dixon_coles_rho},
+                ),
+            ),
+            (
+                "ELO dinâmico + forma/calibração + Dixon-Coles + contexto",
+                predict_match_probabilities(
+                    m_name,
+                    v_name,
+                    dynamic_m_elo,
+                    dynamic_v_elo,
+                    history,
+                    calibration=calibration,
+                    dynamic_elo=(dynamic_m_elo, dynamic_v_elo),
+                    recent_form=recent_form,
+                    score_correction={"method": "dixon_coles", "rho": dixon_coles_rho},
+                    match_context=match_context,
                 ),
             ),
         ]

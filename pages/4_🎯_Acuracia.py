@@ -309,7 +309,7 @@ else:
         st.metric("Previsões avaliadas", cal_total)
         st.caption(f"Brier Score médio: {cal_brier:.3f}")
 
-st.markdown("### Backtesting avancado: ELO dinamico, forma recente e Dixon-Coles")
+st.markdown("### Backtesting avancado: ELO dinamico, forma recente, Dixon-Coles e contexto")
 if df_variant_filtered.empty:
     st.info(
         "Ainda nao ha amostra suficiente para comparar as variantes do modelo com os filtros atuais."
@@ -354,7 +354,7 @@ else:
     st.caption(
         f"Melhor calibracao probabilistica no filtro atual: {best_row['modelo']} "
         f"(Brier {best_row['Brier Score']:.3f}, Log Loss {best_row['Log Loss']:.3f}). "
-        "O modelo avancado muda as chances quando o ELO pre-jogo temporal, a forma recente ou a calibracao local indicam diferenca real."
+        "O modelo avancado muda as chances quando o ELO pre-jogo temporal, a forma recente, a calibracao local ou o contexto do jogo indicam diferenca real."
     )
 
     chart_data = df_variant_filtered.copy()
@@ -369,7 +369,7 @@ else:
         )
 
     preferred = df_variant_filtered[
-        df_variant_filtered["modelo"] == "ELO dinâmico + forma/calibração + Dixon-Coles"
+        df_variant_filtered["modelo"] == "ELO dinâmico + forma/calibração + Dixon-Coles + contexto"
     ]
     buckets = build_calibration_buckets(preferred)
     if not buckets.empty:

@@ -121,6 +121,7 @@ def predict_match_probabilities(
     dynamic_elo=None,
     recent_form=None,
     score_correction=None,
+    match_context=None,
 ):
     """
     Calcula as probabilidades de resultado de uma partida (Vitória Mandante, Empate, Vitória Visitante)
@@ -185,6 +186,42 @@ def predict_match_probabilities(
         form_v = float(np.clip(form_v, 0.90, 1.10))
         lambda_m *= form_m
         lambda_v *= form_v
+
+    context_m = 1.0
+    context_v = 1.0
+    context_meta = {
+        "modelo_com_contexto": False,
+        "fator_contexto_mandante": 1.0,
+        "fator_contexto_visitante": 1.0,
+        "fator_descanso_mandante": 1.0,
+        "fator_descanso_visitante": 1.0,
+        "fator_clima": 1.0,
+        "fator_fase": 1.0,
+        "contexto_resumo": "Contexto neutro",
+    }
+    if match_context:
+        try:
+            context_m = float(match_context.get("fator_mandante", 1.0))
+        except (ValueError, TypeError, AttributeError):
+            context_m = 1.0
+        try:
+            context_v = float(match_context.get("fator_visitante", 1.0))
+        except (ValueError, TypeError, AttributeError):
+            context_v = 1.0
+        context_m = float(np.clip(context_m, 0.92, 1.08))
+        context_v = float(np.clip(context_v, 0.92, 1.08))
+        lambda_m *= context_m
+        lambda_v *= context_v
+        context_meta = {
+            "modelo_com_contexto": bool(match_context.get("modelo_com_contexto", True)),
+            "fator_contexto_mandante": context_m,
+            "fator_contexto_visitante": context_v,
+            "fator_descanso_mandante": float(match_context.get("fator_descanso_mandante", 1.0)),
+            "fator_descanso_visitante": float(match_context.get("fator_descanso_visitante", 1.0)),
+            "fator_clima": float(match_context.get("fator_clima", 1.0)),
+            "fator_fase": float(match_context.get("fator_fase", 1.0)),
+            "contexto_resumo": str(match_context.get("contexto_resumo", "Contexto aplicado")),
+        }
 
     lambda_m, lambda_v, calibration_meta = apply_calibration_to_lambdas(
         lambda_m, lambda_v, mandante_nome, visitante_nome, calibration
@@ -269,6 +306,7 @@ def predict_match_probabilities(
         "fator_forma_mandante": float(form_m),
         "fator_forma_visitante": float(form_v),
         "modelo_com_forma": bool(recent_form),
+        **context_meta,
         **score_correction_meta,
         **calibration_meta,
     }
