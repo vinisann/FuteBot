@@ -167,6 +167,7 @@ def test_model_evaluation_compares_base_dynamic_and_form_variants():
         "ELO dinâmico + forma/calibração",
         "ELO dinâmico + forma/calibração + Dixon-Coles",
         "ELO dinâmico + forma/calibração + Dixon-Coles + contexto",
+        "Ensemble ponderado",
     }
     assert {"brier_score", "log_loss", "is_outcome_correct", "goal_error"}.issubset(results.columns)
     assert not results["log_loss"].isna().any()
