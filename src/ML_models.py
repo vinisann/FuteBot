@@ -3,7 +3,8 @@ import pandas as pd
 import random
 from scipy.stats import poisson
 from src.model_calibration import apply_calibration_to_lambdas
-from src.dixon_coles import apply_dixon_coles_correction
+from src.dixon_coles import apply_dixon_coles_correction, estimate_dixon_coles_rho
+from src.dynamic_elo import calculate_recent_form
 
 def calculate_team_strengths(df_matches):
     """
@@ -367,7 +368,57 @@ def get_group_teams(df_matches_2026):
             group_teams.setdefault(grupo, set()).add(v)
     return {g: list(teams) for g, teams in group_teams.items()}
 
-def simulate_group_matches(df_2026, ataque, defesa, avg_m, avg_v, team_elo, calibration=None):
+def simulate_match_score_from_model(
+    mandante_nome,
+    visitante_nome,
+    team_elo,
+    model_history,
+    calibration=None,
+    score_correction=None,
+    target_date=None,
+    target_match_id=None,
+):
+    m_elo = team_elo.get(mandante_nome, 1850.0)
+    v_elo = team_elo.get(visitante_nome, 1850.0)
+    recent_form = None
+    if target_date is not None and model_history is not None and not model_history.empty:
+        recent_form = calculate_recent_form(
+            model_history,
+            mandante_nome,
+            visitante_nome,
+            target_date,
+            target_match_id=target_match_id,
+        )
+
+    prediction = predict_match_probabilities(
+        mandante_nome,
+        visitante_nome,
+        m_elo,
+        v_elo,
+        model_history,
+        calibration=calibration,
+        recent_form=recent_form,
+        score_correction=score_correction,
+    )
+    matrix = np.array(prediction["matriz_placar"], dtype=float)
+    probabilities = matrix.flatten()
+    probabilities = probabilities / probabilities.sum()
+    sampled_index = int(np.random.choice(len(probabilities), p=probabilities))
+    goals_m, goals_v = np.unravel_index(sampled_index, matrix.shape)
+    return int(goals_m), int(goals_v)
+
+
+def simulate_group_matches(
+    df_2026,
+    ataque,
+    defesa,
+    avg_m,
+    avg_v,
+    team_elo,
+    calibration=None,
+    model_history=None,
+    score_correction=None,
+):
     simulated_matches = df_2026.copy()
     for idx, row in simulated_matches.iterrows():
         if row["status"] != "FINISHED":
@@ -375,6 +426,22 @@ def simulate_group_matches(df_2026, ataque, defesa, avg_m, avg_v, team_elo, cali
             v_name = row["visitante_nome"]
             m_elo = team_elo.get(m_name, 1850.0)
             v_elo = team_elo.get(v_name, 1850.0)
+
+            if model_history is not None and not model_history.empty:
+                gols_m, gols_v = simulate_match_score_from_model(
+                    m_name,
+                    v_name,
+                    team_elo,
+                    model_history,
+                    calibration=calibration,
+                    score_correction=score_correction,
+                    target_date=row.get("data_hora"),
+                    target_match_id=row.get("id"),
+                )
+                simulated_matches.at[idx, "gols_mandante"] = gols_m
+                simulated_matches.at[idx, "gols_visitante"] = gols_v
+                simulated_matches.at[idx, "status"] = "FINISHED"
+                continue
             
             f_ataque_m = ataque.get(m_name, 1.0)
             f_defesa_m = defesa.get(m_name, 1.0)
@@ -507,7 +574,18 @@ def get_group_standings(simulated_matches, group_teams, team_elo):
         standings[group_name] = sorted_teams
     return standings
 
-def simulate_knockout_match(m_name, v_name, ataque, defesa, avg_m, avg_v, team_elo, calibration=None):
+def simulate_knockout_match(
+    m_name,
+    v_name,
+    ataque,
+    defesa,
+    avg_m,
+    avg_v,
+    team_elo,
+    calibration=None,
+    model_history=None,
+    score_correction=None,
+):
     # Guard contra times fantasma
     if not m_name or m_name == "TBD":
         return v_name
@@ -516,6 +594,21 @@ def simulate_knockout_match(m_name, v_name, ataque, defesa, avg_m, avg_v, team_e
         
     m_elo = team_elo.get(m_name, 1850.0)
     v_elo = team_elo.get(v_name, 1850.0)
+    if model_history is not None and not model_history.empty:
+        gols_m, gols_v = simulate_match_score_from_model(
+            m_name,
+            v_name,
+            team_elo,
+            model_history,
+            calibration=calibration,
+            score_correction=score_correction,
+        )
+        if gols_m > gols_v:
+            return m_name
+        if gols_v > gols_m:
+            return v_name
+        gp_m, gp_v = simulate_penalty_shootout(m_elo - v_elo)
+        return m_name if gp_m > gp_v else v_name
     
     f_ataque_m = ataque.get(m_name, 1.0)
     f_defesa_m = defesa.get(m_name, 1.0)
@@ -551,6 +644,7 @@ def run_tournament_simulation(df_matches, df_teams, df_2026, iterations=100, cal
     iterations = max(1, min(10000, int(iterations))) if iterations is not None else 100
     ataque, defesa, avg_m, avg_v = calculate_team_strengths(df_matches)
     team_elo = {row["nome"]: row["elo_rating"] for _, row in df_teams.iterrows()}
+    score_correction = {"method": "dixon_coles", "rho": estimate_dixon_coles_rho(df_matches)}
     
     # Map team ID to name using df_teams
     team_id_to_name = {r["id"]: r["nome"] for _, r in df_teams.iterrows()}
@@ -591,6 +685,21 @@ def run_tournament_simulation(df_matches, df_teams, df_2026, iterations=100, cal
             
         m_elo = team_elo.get(t1, 1850.0)
         v_elo = team_elo.get(t2, 1850.0)
+        if df_matches is not None and not df_matches.empty:
+            gols_m, gols_v = simulate_match_score_from_model(
+                t1,
+                t2,
+                team_elo,
+                df_matches,
+                calibration=calibration,
+                score_correction=score_correction,
+            )
+            if gols_m > gols_v:
+                return t1
+            if gols_v > gols_m:
+                return t2
+            gp_m, gp_v = simulate_penalty_shootout(m_elo - v_elo)
+            return t1 if gp_m > gp_v else t2
         
         f_ataque_m = ataque.get(t1, 1.0)
         f_defesa_m = defesa.get(t1, 1.0)
@@ -677,7 +786,17 @@ def run_tournament_simulation(df_matches, df_teams, df_2026, iterations=100, cal
             r32_winners = {73 + idx: w for idx, w in enumerate(r32_winners_list)}
         else:
             # Simula a Fase de Grupos
-            sim_matches = simulate_group_matches(df_2026, ataque, defesa, avg_m, avg_v, team_elo, calibration=calibration)
+            sim_matches = simulate_group_matches(
+                df_2026,
+                ataque,
+                defesa,
+                avg_m,
+                avg_v,
+                team_elo,
+                calibration=calibration,
+                model_history=df_matches,
+                score_correction=score_correction,
+            )
             standings = get_group_standings(sim_matches, group_teams, team_elo)
             
             winners = {}
@@ -875,6 +994,7 @@ def simulate_single_bracket(df_matches, df_teams, df_2026, calibration=None):
     import random
     ataque, defesa, avg_m, avg_v = calculate_team_strengths(df_matches)
     team_elo = {row["nome"]: row["elo_rating"] for _, row in df_teams.iterrows()}
+    score_correction = {"method": "dixon_coles", "rho": estimate_dixon_coles_rho(df_matches)}
     
     # Map team ID to name using df_teams
     team_id_to_name = {r["id"]: r["nome"] for _, r in df_teams.iterrows()}
@@ -915,6 +1035,23 @@ def simulate_single_bracket(df_matches, df_teams, df_2026, calibration=None):
             
         m_elo = team_elo.get(t1, 1850.0)
         v_elo = team_elo.get(t2, 1850.0)
+        if df_matches is not None and not df_matches.empty:
+            gols_m, gols_v = simulate_match_score_from_model(
+                t1,
+                t2,
+                team_elo,
+                df_matches,
+                calibration=calibration,
+                score_correction=score_correction,
+            )
+            if gols_m > gols_v:
+                return t1, t2, f"{gols_m} - {gols_v}"
+            if gols_v > gols_m:
+                return t2, t1, f"{gols_m} - {gols_v}"
+            gp_m, gp_v = simulate_penalty_shootout(m_elo - v_elo)
+            if gp_m > gp_v:
+                return t1, t2, f"{gols_m} ({gp_m}) - ({gp_v}) {gols_v}"
+            return t2, t1, f"{gols_m} ({gp_m}) - ({gp_v}) {gols_v}"
         
         f_ataque_m = ataque.get(t1, 1.0)
         f_defesa_m = defesa.get(t1, 1.0)
@@ -984,7 +1121,17 @@ def simulate_single_bracket(df_matches, df_teams, df_2026, calibration=None):
         r32_winners = {73 + idx: w for idx, w in enumerate(r32_winners_list)}
     else:
         group_teams = get_group_teams(df_2026)
-        sim_matches = simulate_group_matches(df_2026, ataque, defesa, avg_m, avg_v, team_elo, calibration=calibration)
+        sim_matches = simulate_group_matches(
+            df_2026,
+            ataque,
+            defesa,
+            avg_m,
+            avg_v,
+            team_elo,
+            calibration=calibration,
+            model_history=df_matches,
+            score_correction=score_correction,
+        )
         standings = get_group_standings(sim_matches, group_teams, team_elo)
         
         winners = {}
