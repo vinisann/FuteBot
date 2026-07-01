@@ -11,8 +11,48 @@ from src.database import init_db, load_historical_matches, load_all_teams, load_
 from src.ML_models import predict_match_probabilities
 from src.model_calibration import build_model_calibration
 from src.model_explainability import explain_prediction, format_explanation_markdown
+from src.external_signals import build_match_external_signals
+from src.scraper import fetch_match_specific_news, get_probable_lineup
 from src.styles import inject_css
 from src.utils import get_flag, get_flag_html
+
+
+def _lineup_to_text(team_name):
+    lineup = get_probable_lineup(team_name)
+    if not lineup or lineup.get("tecnico") == "A confirmar":
+        return None
+    titulares = lineup.get("titulares", [])
+    if not titulares:
+        return None
+    return f"Provavel escalacao: {'; '.join(str(player) for player in titulares)}."
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def load_external_prediction_inputs(mandante_nome, visitante_nome):
+    try:
+        news = fetch_match_specific_news(mandante_nome, visitante_nome, max_results=3)
+    except Exception:
+        news = []
+
+    news_by_team = {mandante_nome: [], visitante_nome: []}
+    for item in news:
+        title = str(item.get("title", ""))
+        parsed_lineup = str(item.get("parsed_lineup") or "")
+        text = " ".join(part for part in [title, parsed_lineup] if part).strip()
+        text_lower = text.lower()
+        if not text:
+            continue
+        if mandante_nome.lower() in text_lower:
+            news_by_team[mandante_nome].append(text)
+        if visitante_nome.lower() in text_lower:
+            news_by_team[visitante_nome].append(text)
+
+    lineups = {
+        mandante_nome: _lineup_to_text(mandante_nome),
+        visitante_nome: _lineup_to_text(visitante_nome),
+    }
+    return {"news": news_by_team, "lineups": lineups}
+
 
 def clean_html(html_str):
     """Remove recuos e espaços vazios por linha para evitar falso-positivo de bloco de código no Streamlit Markdown."""
@@ -59,8 +99,21 @@ else:
         v_fifa = visitante_data["ranking_fifa"]
         
         # Calcular previsões de probabilidade
+        external_inputs = load_external_prediction_inputs(mandante_nome, visitante_nome)
+        external_signals = build_match_external_signals(
+            mandante_nome,
+            visitante_nome,
+            news_items=external_inputs["news"],
+            lineups=external_inputs["lineups"],
+        )
         pred = predict_match_probabilities(
-            mandante_nome, visitante_nome, m_elo, v_elo, df_matches, calibration=model_calibration
+            mandante_nome,
+            visitante_nome,
+            m_elo,
+            v_elo,
+            df_matches,
+            calibration=model_calibration,
+            external_signals=external_signals,
         )
         explanation = explain_prediction(pred)
         
