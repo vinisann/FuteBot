@@ -91,6 +91,7 @@ def init_db():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_previsoes_partida ON previsoes_partidas(partida_id);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_previsoes_evaluated ON previsoes_partidas(evaluated_at);")
         _dedupe_group_matches(cursor)
+        _dedupe_2026_knockout_matches(cursor)
         
         conn.commit()
     finally:
@@ -151,6 +152,84 @@ def _dedupe_group_matches(cursor):
         )
         for duplicate in rows[1:]:
             cursor.execute("DELETE FROM partidas WHERE id = ?", (duplicate[0],))
+
+def _repoint_prediction_snapshots(cursor, keep_id, duplicate_ids):
+    for duplicate_id in duplicate_ids:
+        cursor.execute(
+            """
+            DELETE FROM previsoes_partidas
+            WHERE partida_id = ?
+              AND modelo_versao IN (
+                  SELECT modelo_versao FROM previsoes_partidas WHERE partida_id = ?
+              )
+            """,
+            (duplicate_id, keep_id),
+        )
+        cursor.execute(
+            "UPDATE previsoes_partidas SET partida_id = ? WHERE partida_id = ?",
+            (keep_id, duplicate_id),
+        )
+
+def _dedupe_2026_knockout_matches(cursor):
+    """Remove duplicatas de mata-mata de 2026 entre API e OpenFootball."""
+    cursor.execute(
+        """
+        SELECT
+            MIN(mandante_id, visitante_id) AS team_a,
+            MAX(mandante_id, visitante_id) AS team_b,
+            COUNT(*) AS total
+        FROM partidas
+        WHERE ano_copa = 2026
+          AND (grupo IS NULL OR grupo = '')
+          AND status IN ('SCHEDULED', 'LIVE', 'FINISHED')
+        GROUP BY team_a, team_b
+        HAVING COUNT(*) > 1
+        """
+    )
+    duplicate_groups = cursor.fetchall()
+
+    source_priority = {
+        "openfootball": 0,
+        "api": 1,
+        "manual": 2,
+        "seed": 3,
+    }
+    status_priority = {
+        "FINISHED": 0,
+        "LIVE": 1,
+        "SCHEDULED": 2,
+    }
+
+    for group in duplicate_groups:
+        cursor.execute(
+            """
+            SELECT id, origem_dados, status
+            FROM partidas
+            WHERE ano_copa = 2026
+              AND (grupo IS NULL OR grupo = '')
+              AND status IN ('SCHEDULED', 'LIVE', 'FINISHED')
+              AND MIN(mandante_id, visitante_id) = ?
+              AND MAX(mandante_id, visitante_id) = ?
+            """,
+            (group[0], group[1]),
+        )
+        rows = cursor.fetchall()
+        rows = sorted(
+            rows,
+            key=lambda row: (
+                status_priority.get(row["status"], 9),
+                source_priority.get(row["origem_dados"], 9),
+                row["id"],
+            ),
+        )
+        keep_id = rows[0]["id"]
+        duplicate_ids = [row["id"] for row in rows[1:]]
+        if duplicate_ids:
+            _repoint_prediction_snapshots(cursor, keep_id, duplicate_ids)
+            cursor.executemany(
+                "DELETE FROM partidas WHERE id = ?",
+                [(duplicate_id,) for duplicate_id in duplicate_ids],
+            )
 
 TRANSLATE_TEAM_NAME = {
     "Argentina": "Argentina",
@@ -1117,18 +1196,34 @@ def sync_openfootball_finished_matches(ano=2026):
                     (ano_copa, grupo, mandante_id, visitante_id, visitante_id, mandante_id),
                 )
             else:
-                cursor.execute(
-                    """
-                    SELECT id, mandante_id
-                    FROM partidas
-                    WHERE ano_copa = ? AND fase = ? AND (
-                        (mandante_id = ? AND visitante_id = ?) OR
-                        (mandante_id = ? AND visitante_id = ?)
+                if ano_copa == 2026:
+                    cursor.execute(
+                        """
+                        SELECT id, mandante_id
+                        FROM partidas
+                        WHERE ano_copa = ?
+                          AND (grupo IS NULL OR grupo = '')
+                          AND (
+                              (mandante_id = ? AND visitante_id = ?) OR
+                              (mandante_id = ? AND visitante_id = ?)
+                          )
+                        ORDER BY CASE origem_dados WHEN 'seed' THEN 0 ELSE 1 END, id
+                        """,
+                        (ano_copa, mandante_id, visitante_id, visitante_id, mandante_id),
                     )
-                    ORDER BY CASE origem_dados WHEN 'seed' THEN 0 ELSE 1 END, id
-                    """,
-                    (ano_copa, fase, mandante_id, visitante_id, visitante_id, mandante_id),
-                )
+                else:
+                    cursor.execute(
+                        """
+                        SELECT id, mandante_id
+                        FROM partidas
+                        WHERE ano_copa = ? AND fase = ? AND (
+                            (mandante_id = ? AND visitante_id = ?) OR
+                            (mandante_id = ? AND visitante_id = ?)
+                        )
+                        ORDER BY CASE origem_dados WHEN 'seed' THEN 0 ELSE 1 END, id
+                        """,
+                        (ano_copa, fase, mandante_id, visitante_id, visitante_id, mandante_id),
+                    )
             match_rows = cursor.fetchall()
             match_row = match_rows[0] if match_rows else None
 
@@ -1156,6 +1251,7 @@ def sync_openfootball_finished_matches(ano=2026):
                 )
                 duplicate_ids = [row["id"] for row in match_rows[1:]]
                 if duplicate_ids:
+                    _repoint_prediction_snapshots(cursor, match_row["id"], duplicate_ids)
                     cursor.executemany(
                         "DELETE FROM partidas WHERE id = ?",
                         [(duplicate_id,) for duplicate_id in duplicate_ids],
@@ -1225,19 +1321,37 @@ def sync_api_match_to_db(game):
                 elif gols_v > gols_m:
                     vencedor_id = v_id
             
-            # Procurar se a partida já existe no banco (incluindo a fase para evitar problemas de remates)
-            cursor.execute(
-                """
-                SELECT id, mandante_id, visitante_id, gols_mandante, gols_visitante, status, data_hora, vencedor_id
-                FROM partidas 
-                WHERE ano_copa = ? AND fase = ? AND (
-                    (mandante_id = ? AND visitante_id = ?) OR
-                    (mandante_id = ? AND visitante_id = ?)
+            # Procurar se a partida ja existe no banco.
+            # Em mata-mata de 2026, fontes externas podem divergir no texto da fase.
+            if ano == 2026 and not grupo:
+                cursor.execute(
+                    """
+                    SELECT id, mandante_id, visitante_id, gols_mandante, gols_visitante, status, data_hora, vencedor_id
+                    FROM partidas
+                    WHERE ano_copa = ?
+                      AND (grupo IS NULL OR grupo = '')
+                      AND (
+                          (mandante_id = ? AND visitante_id = ?) OR
+                          (mandante_id = ? AND visitante_id = ?)
+                      )
+                    ORDER BY CASE origem_dados WHEN 'openfootball' THEN 0 WHEN 'api' THEN 1 WHEN 'manual' THEN 2 ELSE 3 END, id
+                    """,
+                    (ano, m_id, v_id, v_id, m_id),
                 )
-                """,
-                (ano, fase, m_id, v_id, v_id, m_id)
-            )
-            match_row = cursor.fetchone()
+            else:
+                cursor.execute(
+                    """
+                    SELECT id, mandante_id, visitante_id, gols_mandante, gols_visitante, status, data_hora, vencedor_id
+                    FROM partidas
+                    WHERE ano_copa = ? AND fase = ? AND (
+                        (mandante_id = ? AND visitante_id = ?) OR
+                        (mandante_id = ? AND visitante_id = ?)
+                    )
+                    """,
+                    (ano, fase, m_id, v_id, v_id, m_id)
+                )
+            match_rows = cursor.fetchall()
+            match_row = match_rows[0] if match_rows else None
             
             if match_row:
                 p_id = match_row["id"]
@@ -1258,6 +1372,13 @@ def sync_api_match_to_db(game):
                         """,
                         (m_id, v_id, gols_m, gols_v, status, fase, grupo, data_hora, vencedor_id, p_id)
                     )
+                    duplicate_ids = [row["id"] for row in match_rows[1:]]
+                    if duplicate_ids:
+                        _repoint_prediction_snapshots(cursor, p_id, duplicate_ids)
+                        cursor.executemany(
+                            "DELETE FROM partidas WHERE id = ?",
+                            [(duplicate_id,) for duplicate_id in duplicate_ids],
+                        )
                     conn.commit()
                     return p_id
                 else:
@@ -1272,7 +1393,14 @@ def sync_api_match_to_db(game):
                             """,
                             (gols_m, gols_v, status, fase, grupo, data_hora, vencedor_id, p_id)
                         )
-                        conn.commit()
+                    duplicate_ids = [row["id"] for row in match_rows[1:]]
+                    if duplicate_ids:
+                        _repoint_prediction_snapshots(cursor, p_id, duplicate_ids)
+                        cursor.executemany(
+                            "DELETE FROM partidas WHERE id = ?",
+                            [(duplicate_id,) for duplicate_id in duplicate_ids],
+                        )
+                    conn.commit()
                     return p_id
             else:
                 # Caso não exista, insere no banco
