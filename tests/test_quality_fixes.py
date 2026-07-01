@@ -249,3 +249,129 @@ def test_init_db_removes_existing_seed_duplicate_group_matches(tmp_path, monkeyp
 
     assert len(canada_qatar) == 1
     assert canada_qatar.iloc[0]["origem_dados"] == "openfootball"
+
+
+def test_init_db_removes_duplicate_2026_knockout_matches_from_multiple_sources(tmp_path, monkeypatch):
+    database = importlib.import_module("src.database")
+    monkeypatch.setattr(database, "DB_DIR", str(tmp_path))
+    monkeypatch.setattr(database, "DB_PATH", str(tmp_path / "futebot.db"))
+    database.init_db()
+
+    conn = database.get_connection()
+    try:
+        rows = conn.execute("SELECT nome, id FROM selecoes WHERE nome IN ('Brasil', 'Alemanha')").fetchall()
+        ids = {row["nome"]: row["id"] for row in rows}
+        duplicate_rows = [
+            (
+                2026,
+                "2026-06-29 12:00",
+                ids["Brasil"],
+                ids["Alemanha"],
+                2,
+                1,
+                "Round of 32",
+                None,
+                "FINISHED",
+                ids["Brasil"],
+                "openfootball",
+            ),
+            (
+                2026,
+                "2026-06-29 14:00",
+                ids["Brasil"],
+                ids["Alemanha"],
+                2,
+                1,
+                "Fase de 32",
+                None,
+                "FINISHED",
+                ids["Brasil"],
+                "api",
+            ),
+        ]
+        conn.executemany(
+            """
+            INSERT INTO partidas
+            (ano_copa, data_hora, mandante_id, visitante_id, gols_mandante, gols_visitante,
+             fase, grupo, status, vencedor_id, origem_dados)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            duplicate_rows,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    database.init_db()
+    df = database.load_historical_matches(include_seed_2026=False)
+    brasil_alemanha = df[
+        (df["ano_copa"] == 2026)
+        & (
+            ((df["mandante_nome"] == "Brasil") & (df["visitante_nome"] == "Alemanha"))
+            | ((df["mandante_nome"] == "Alemanha") & (df["visitante_nome"] == "Brasil"))
+        )
+    ]
+
+    assert len(brasil_alemanha) == 1
+
+
+def test_api_sync_reuses_2026_knockout_match_when_phase_label_differs(tmp_path, monkeypatch):
+    database = importlib.import_module("src.database")
+    monkeypatch.setattr(database, "DB_DIR", str(tmp_path))
+    monkeypatch.setattr(database, "DB_PATH", str(tmp_path / "futebot.db"))
+    database.init_db()
+
+    conn = database.get_connection()
+    try:
+        rows = conn.execute("SELECT nome, id FROM selecoes WHERE nome IN ('Brasil', 'Alemanha')").fetchall()
+        ids = {row["nome"]: row["id"] for row in rows}
+        conn.execute(
+            """
+            INSERT INTO partidas
+            (ano_copa, data_hora, mandante_id, visitante_id, gols_mandante, gols_visitante,
+             fase, grupo, status, vencedor_id, origem_dados)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'openfootball')
+            """,
+            (
+                2026,
+                "2026-06-29 12:00",
+                ids["Brasil"],
+                ids["Alemanha"],
+                2,
+                1,
+                "Round of 32",
+                None,
+                "FINISHED",
+                ids["Brasil"],
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    database.sync_api_match_to_db(
+        {
+            "ano_copa": 2026,
+            "data_hora": "2026-06-29 14:00",
+            "mandante_nome": "Brasil",
+            "visitante_nome": "Alemanha",
+            "gols_mandante": 2,
+            "gols_visitante": 1,
+            "status": "FINISHED",
+            "fase": "Fase de 32",
+            "grupo": None,
+            "vencedor_nome": "Brasil",
+        }
+    )
+
+    df = database.load_historical_matches(include_seed_2026=False)
+    brasil_alemanha = df[
+        (df["ano_copa"] == 2026)
+        & (
+            ((df["mandante_nome"] == "Brasil") & (df["visitante_nome"] == "Alemanha"))
+            | ((df["mandante_nome"] == "Alemanha") & (df["visitante_nome"] == "Brasil"))
+        )
+    ]
+
+    assert len(brasil_alemanha) == 1
+    assert brasil_alemanha.iloc[0]["origem_dados"] == "api"
