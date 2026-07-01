@@ -3,6 +3,7 @@ import os
 import pandas as pd
 from datetime import datetime
 import requests
+import json
 
 DB_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
 DB_PATH = os.path.join(DB_DIR, "futebot.db")
@@ -78,6 +79,10 @@ def init_db():
             goal_error REAL,
             brier_score REAL,
             evaluated_at TEXT,
+            sinais_externos_usados INTEGER NOT NULL DEFAULT 0,
+            ajuste_externo_mandante REAL NOT NULL DEFAULT 1.0,
+            ajuste_externo_visitante REAL NOT NULL DEFAULT 1.0,
+            motivos_sinais_externos TEXT NOT NULL DEFAULT '',
             FOREIGN KEY (partida_id) REFERENCES partidas(id),
             UNIQUE (partida_id, modelo_versao)
         )
@@ -85,6 +90,7 @@ def init_db():
         
         # Criar índices para performance
         _ensure_partidas_schema(cursor)
+        _ensure_previsoes_schema(cursor)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_partidas_ano ON partidas(ano_copa);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_partidas_status ON partidas(status);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_partidas_origem ON partidas(origem_dados);")
@@ -107,6 +113,20 @@ def _ensure_partidas_schema(cursor):
     if "origem_dados" not in columns:
         cursor.execute("ALTER TABLE partidas ADD COLUMN origem_dados TEXT NOT NULL DEFAULT 'manual'")
         cursor.execute("UPDATE partidas SET origem_dados = 'seed' WHERE ano_copa = 2026")
+
+def _ensure_previsoes_schema(cursor):
+    """Aplica migracoes leves para snapshots de previsao criados por versoes antigas."""
+    cursor.execute("PRAGMA table_info(previsoes_partidas)")
+    columns = {row[1] for row in cursor.fetchall()}
+    migrations = {
+        "sinais_externos_usados": "ALTER TABLE previsoes_partidas ADD COLUMN sinais_externos_usados INTEGER NOT NULL DEFAULT 0",
+        "ajuste_externo_mandante": "ALTER TABLE previsoes_partidas ADD COLUMN ajuste_externo_mandante REAL NOT NULL DEFAULT 1.0",
+        "ajuste_externo_visitante": "ALTER TABLE previsoes_partidas ADD COLUMN ajuste_externo_visitante REAL NOT NULL DEFAULT 1.0",
+        "motivos_sinais_externos": "ALTER TABLE previsoes_partidas ADD COLUMN motivos_sinais_externos TEXT NOT NULL DEFAULT ''",
+    }
+    for column, statement in migrations.items():
+        if column not in columns:
+            cursor.execute(statement)
 
 def _dedupe_group_matches(cursor):
     """Remove duplicatas de confrontos de grupo, preferindo fontes reais a seed."""
@@ -1029,12 +1049,18 @@ def save_prediction_snapshot(partida_id, prediction, modelo_versao="calibrated-v
             return existing["id"]
 
         placar = prediction.get("placar_mais_provavel", (0, 0, 0.0))
+        motivos_sinais = prediction.get("motivos_sinais_externos", [])
+        if isinstance(motivos_sinais, (list, tuple)):
+            motivos_sinais = json.dumps(list(motivos_sinais), ensure_ascii=False)
+        else:
+            motivos_sinais = str(motivos_sinais or "")
         cursor.execute(
             """
             INSERT INTO previsoes_partidas
             (partida_id, modelo_versao, created_at, xg_mandante, xg_visitante,
-             prob_mandante, prob_empate, prob_visitante, prev_gols_mandante, prev_gols_visitante)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             prob_mandante, prob_empate, prob_visitante, prev_gols_mandante, prev_gols_visitante,
+             sinais_externos_usados, ajuste_externo_mandante, ajuste_externo_visitante, motivos_sinais_externos)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 partida_id,
@@ -1047,6 +1073,10 @@ def save_prediction_snapshot(partida_id, prediction, modelo_versao="calibrated-v
                 float(prediction["prob_vitoria_visitante"]),
                 int(placar[0]),
                 int(placar[1]),
+                1 if prediction.get("sinais_externos_usados") else 0,
+                float(prediction.get("ajuste_externo_mandante", 1.0)),
+                float(prediction.get("ajuste_externo_visitante", 1.0)),
+                motivos_sinais,
             ),
         )
         conn.commit()

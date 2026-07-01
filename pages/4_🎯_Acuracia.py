@@ -13,6 +13,7 @@ from src.database import get_connection, init_db, load_historical_matches, load_
 from src.ML_models import predict_match_probabilities
 from src.model_evaluation import evaluate_model_variants, build_calibration_buckets
 from src.model_explainability import explain_prediction, format_explanation_markdown
+from src.external_signal_evaluation import summarize_external_signal_evaluations
 from src.styles import inject_css
 from src.utils import get_flag_html, get_flag, format_fase
 
@@ -309,6 +310,37 @@ else:
     with col_sample:
         st.metric("Previsões avaliadas", cal_total)
         st.caption(f"Brier Score médio: {cal_brier:.3f}")
+
+st.markdown("### Validacao dos sinais externos")
+external_summary = summarize_external_signal_evaluations(df_calibrated_filtered)
+if external_summary.empty:
+    st.info(
+        "Ainda nao ha snapshots avaliados suficientes para medir o impacto de noticias e escalacoes. "
+        "Novas previsoes pre-jogo passam a salvar estes metadados para comparacao futura."
+    )
+else:
+    display_external = external_summary.copy()
+    display_external["Acuracia 1X2"] = (display_external["acuracia_1x2"] * 100).round(1)
+    display_external["Placar exato"] = (display_external["placar_exato"] * 100).round(1)
+    display_external["Erro medio gols"] = display_external["erro_medio_gols"].round(2)
+    display_external["Brier Score"] = display_external["brier_score"].round(3)
+    display_external = display_external.rename(
+        columns={
+            "grupo": "Grupo",
+            "jogos": "Jogos",
+        }
+    )
+    st.dataframe(
+        display_external[
+            ["Grupo", "Jogos", "Acuracia 1X2", "Placar exato", "Erro medio gols", "Brier Score"]
+        ],
+        hide_index=True,
+        use_container_width=True,
+    )
+    if int(external_summary["jogos"].sum()) < 10:
+        st.caption(
+            "Amostra pequena: estes numeros servem para monitoramento inicial, nao para conclusao estatistica."
+        )
 
 st.markdown("### Backtesting avancado: ELO dinamico, forma recente, Dixon-Coles e contexto")
 if df_variant_filtered.empty:

@@ -16,7 +16,9 @@ from src.config import get_api_key
 from src.database import VALID_MATCH_STATUSES, init_db, load_historical_matches, load_all_teams, update_live_match, sync_api_match_to_db, sync_openfootball_finished_matches, load_2026_matches, save_prediction_snapshot, evaluate_finished_predictions, load_prediction_evaluations
 from src.ML_models import predict_match_probabilities, simulate_match_in_play
 from src.model_calibration import build_model_calibration
+from src.external_signals import build_match_external_signals
 from src.api_client import fetch_live_matches_from_api, calculate_match_minute
+from src.scraper import get_probable_lineup
 from src.styles import inject_css
 from src.utils import get_flag, format_fase, get_flag_html
 
@@ -35,6 +37,28 @@ if "openfootball_sync_2026" not in st.session_state:
 
 # Injetar CSS compartilhado (tema branco)
 inject_css()
+
+
+def _lineup_to_text(team_name):
+    lineup = get_probable_lineup(team_name)
+    if not lineup or lineup.get("tecnico") == "A confirmar":
+        return None
+    titulares = lineup.get("titulares", [])
+    if not titulares:
+        return None
+    return f"Provavel escalacao: {'; '.join(str(player) for player in titulares)}."
+
+
+def build_offline_external_signals(mandante_nome, visitante_nome):
+    return build_match_external_signals(
+        mandante_nome,
+        visitante_nome,
+        lineups={
+            mandante_nome: _lineup_to_text(mandante_nome),
+            visitante_nome: _lineup_to_text(visitante_nome),
+        },
+    )
+
 
 def clean_html(html_str):
     """Remove recuos e espaços vazios por linha para evitar falso-positivo de bloco de código no Streamlit Markdown."""
@@ -274,8 +298,18 @@ def render_match_card(game, df_matches, team_elo_map, team_sigla_map, calibratio
 
         # ---- JOGO AGENDADO: Previsão pré-jogo + botão de simulação ----
         elif status == "SCHEDULED":
-            pred_pre = predict_match_probabilities(m_name, v_name, m_elo, v_elo, df_matches, calibration=calibration)
-            save_prediction_snapshot(g_id, pred_pre)
+            external_signals = build_offline_external_signals(m_name, v_name)
+            pred_pre = predict_match_probabilities(
+                m_name,
+                v_name,
+                m_elo,
+                v_elo,
+                df_matches,
+                calibration=calibration,
+                external_signals=external_signals,
+            )
+            snapshot_version = "external-v1" if pred_pre.get("sinais_externos_usados") else "calibrated-v1"
+            save_prediction_snapshot(g_id, pred_pre, snapshot_version)
 
             p_m = pred_pre["prob_vitoria_mandante"] * 100
             p_e = pred_pre["prob_empate"] * 100
