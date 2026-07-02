@@ -17,9 +17,21 @@ flowchart TD
     SQLite --> Matches2026["load_2026_matches<br/>agenda e jogos 2026"]
     SQLite --> Teams["load_all_teams<br/>ELO e ranking"]
 
+    Matches --> DynamicElo["src/dynamic_elo.py<br/>ELO dinamico + forma recente"]
+    Matches --> Context["src/match_context.py<br/>fase, descanso, clima/venue"]
+    Matches --> DixonColes["src/dixon_coles.py<br/>correcao de placares baixos"]
+    Matches --> ModelEval["src/model_evaluation.py<br/>backtesting profundo"]
     Matches --> Model["src/ML_models.py<br/>Poisson + ELO"]
     Teams --> Model
     Matches2026 --> Model
+    DynamicElo --> Model
+    Context --> Model
+    DixonColes --> Model
+
+    Scraper["src/scraper.py<br/>noticias e provaveis escalacoes"] --> ExternalSignals["src/external_signals.py<br/>sinais externos"]
+    Scraper --> PlayerImpact["src/player_impact.py<br/>impacto de jogadores/desfalques"]
+    ExternalSignals --> Model
+    PlayerImpact --> ExternalSignals
 
     Model --> Predictions["Previsoes pre-jogo<br/>xG, 1X2, placar provavel"]
     Predictions --> Snapshot["save_prediction_snapshot"]
@@ -33,9 +45,14 @@ flowchart TD
     PredictionTable --> Calibration["src/model_calibration.py<br/>ajustes conservadores"]
     Calibration --> Model
 
+    ModelEval --> Baseline["Baseline ELO simples<br/>regua comparativa"]
+    ModelEval --> Ensemble["src/model_ensemble.py<br/>ensemble ponderado"]
+    Baseline --> Accuracy["Backtest temporal<br/>sem vazamento"]
+    Ensemble --> Accuracy
+
     Model --> LiveModel["simulate_match_in_play<br/>probabilidade ao vivo"]
     Model --> Tournament["run_tournament_simulation<br/>simulacao de torneio"]
-    Model --> Accuracy["Backtest temporal<br/>sem vazamento"]
+    Model --> ModelEval
 
     Predictions --> App
     LiveModel --> App
@@ -50,5 +67,5 @@ flowchart TD
 
     class FootballData,OpenFootball,Seed,Secrets source;
     class SQLite,PredictionTable db;
-    class Model,Calibration,LiveModel,Tournament,Accuracy model;
+    class Model,Calibration,LiveModel,Tournament,Accuracy,DynamicElo,Context,DixonColes,ModelEval,Ensemble,Baseline,ExternalSignals,PlayerImpact model;
     class User,App,Pages ui;

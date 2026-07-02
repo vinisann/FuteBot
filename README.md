@@ -17,6 +17,12 @@ O projeto foi pensado para funcionar tanto online quanto offline: quando há con
 - Histórico de Copas com filtros por edição e fase.
 - Página de acurácia com backtest temporal sem vazamento de dados.
 - Calibração incremental baseada em previsões salvas antes dos jogos.
+- ELO dinâmico temporal para backtesting histórico sem usar ratings atuais em jogos antigos.
+- Forma recente ponderada por recência.
+- Correção Dixon-Coles para placares baixos.
+- Contexto de jogo, sinais externos, prováveis escalações e impacto conservador de jogadores.
+- Ensemble ponderado entre variantes do modelo.
+- Backtesting profundo com baseline ELO, Brier Score, Log Loss, curva de calibração, segmentos fracos e alerta de overconfidence.
 - Documentação estática e fluxograma Mermaid em `docs/`.
 
 ## Stack
@@ -117,11 +123,30 @@ O modelo estatístico combina:
 
 - Histórico de partidas finalizadas.
 - Força ofensiva e defensiva por seleção.
-- Ajuste por ELO.
+- Ajuste por ELO atual e ELO dinâmico temporal.
+- Forma recente com peso maior para jogos mais novos.
 - Distribuição de Poisson para estimar placares.
+- Correção Dixon-Coles para melhorar a calibração de placares baixos.
+- Contexto de jogo, como fase, descanso, clima/venue quando disponível.
+- Sinais externos: notícias, prováveis escalações e impacto de jogadores/desfalques.
+- Ensemble ponderado por desempenho histórico.
 - Matriz de probabilidades para calcular vitória, empate e derrota.
 
 Para evitar vazamento de dados, a página de acurácia prevê cada partida usando apenas jogos anteriores à data daquela partida.
+
+## Backtesting profundo
+
+A página de acurácia compara diferentes variações do modelo:
+
+- `Baseline ELO simples`: régua mínima para saber se o modelo estatístico realmente agrega valor.
+- `Base Poisson-ELO`: modelo base com forças ofensivas/defensivas e Poisson.
+- `ELO dinâmico`: ratings pré-jogo calculados em ordem cronológica.
+- `ELO dinâmico + forma/calibração`: adiciona forma recente e calibração incremental.
+- `ELO dinâmico + forma/calibração + Dixon-Coles`: corrige placares baixos.
+- `ELO dinâmico + forma/calibração + Dixon-Coles + contexto`: inclui contexto do jogo.
+- `Ensemble ponderado`: combina variantes conforme desempenho histórico.
+
+O backtesting mede acurácia 1X2, placar exato, erro de gols, Brier Score, Log Loss, erro de calibração, overconfidence e desempenho por segmentos como Copa, fase e faixa de confiança.
 
 ## Calibração incremental
 
@@ -148,14 +173,21 @@ FuteBot/
     api_client.py                # Cliente Football-Data.org
     config.py                    # Leitura de secrets/env vars
     database.py                  # SQLite, sync e persistência
+    dynamic_elo.py               # ELO temporal e forma recente
+    dixon_coles.py               # Correção Dixon-Coles
     ML_models.py                 # Modelo Poisson/ELO e simulações
     model_calibration.py         # Calibração incremental
+    model_ensemble.py            # Ensemble ponderado
+    model_evaluation.py          # Backtesting profundo e métricas
+    match_context.py             # Contexto de jogo
+    player_impact.py             # Impacto conservador de jogadores/desfalques
     statistics.py                # Estatísticas agregadas por seleção
     utils.py                     # Bandeiras, nomes e helpers visuais
   tests/                         # Testes automatizados
   docs/
     index.html                   # Documentação estática
     architecture-flow.mmd        # Fluxograma Mermaid
+    modeling.md                  # Detalhamento do modelo estatístico
   data/
     .gitkeep                     # Mantém a pasta no Git
 ```
@@ -166,6 +198,7 @@ Além deste README:
 
 - `docs/index.html`: documentação estática do projeto.
 - `docs/architecture-flow.mmd`: fluxograma Mermaid da arquitetura.
+- `docs/modeling.md`: detalhes do modelo, métricas, backtesting e limitações.
 
 O Mermaid pode ser visualizado diretamente pelo GitHub ou por extensões compatíveis.
 
@@ -194,6 +227,7 @@ Os testes cobrem pontos como:
 - deduplicação de partidas sincronizadas;
 - status especiais da API;
 - calibração incremental.
+- ELO dinâmico, forma recente, Dixon-Coles, contexto, ensemble, jogadores/desfalques e backtesting profundo.
 
 ## Segurança e versionamento
 

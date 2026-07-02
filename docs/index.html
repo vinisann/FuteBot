@@ -223,6 +223,7 @@
       <a href="#setup">Setup</a>
       <a href="#data">Dados</a>
       <a href="#model">Modelo</a>
+      <a href="#backtesting">Backtesting</a>
       <a href="#screens">Telas</a>
       <a href="#qa">QA</a>
       <a href="#security">Seguranca</a>
@@ -250,8 +251,8 @@
         </div>
         <div class="card">
           <span class="tag violet">Previsoes</span>
-          <h3>Poisson + ELO</h3>
-          <p>Calcula xG, placar provavel, probabilidades 1X2 e simulacoes de torneio.</p>
+          <h3>Poisson, ELO e ensemble</h3>
+          <p>Calcula xG, placar provavel, probabilidades 1X2, simulacoes e comparativos entre variantes.</p>
         </div>
       </div>
       <div class="flow-link">
@@ -297,19 +298,66 @@ streamlit run app.py</code></pre>
         </div>
         <div class="card">
           <span class="tag amber">ELO</span>
-          <h3>Ajuste de favoritismo</h3>
-          <p>O diferencial de ELO altera os gols esperados antes da distribuicao de Poisson.</p>
+          <h3>ELO atual e dinamico</h3>
+          <p>O diferencial de ELO altera os gols esperados; no backtest historico, o ELO dinamico evita vazamento temporal.</p>
         </div>
         <div class="card">
           <span class="tag green">Calibracao</span>
           <h3>Aprendizado incremental</h3>
           <p>Previsoes pre-jogo sao salvas, avaliadas apos o placar real e usadas com limites conservadores.</p>
         </div>
+        <div class="card">
+          <span class="tag violet">Placares</span>
+          <h3>Poisson + Dixon-Coles</h3>
+          <p>A matriz de placares vem de Poisson e pode receber correcao Dixon-Coles para melhorar placares baixos.</p>
+        </div>
+        <div class="card">
+          <span class="tag blue">Contexto</span>
+          <h3>Forma, fase e jogadores</h3>
+          <p>Forma recente, descanso, fase, noticias, provaveis escalacoes e impacto de jogadores entram com caps conservadores.</p>
+        </div>
+        <div class="card">
+          <span class="tag amber">Comparacao</span>
+          <h3>Ensemble ponderado</h3>
+          <p>Variantes sao comparadas e combinadas por desempenho historico, mantendo o baseline como referencia.</p>
+        </div>
       </div>
       <p style="margin-top: 14px;">
         A calibracao so entra quando ha amostra minima de previsoes avaliadas. Jogos seed, simulados ou sem placar real
         nao entram no aprendizado.
       </p>
+      <div class="flow-link">
+        <div>
+          <h3>Detalhamento do modelo</h3>
+          <p>O documento de modelagem explica pipeline, metricas, variantes e limitacoes conhecidas.</p>
+        </div>
+        <a href="./modeling.md">Abrir modeling.md</a>
+      </div>
+    </section>
+
+    <section id="backtesting">
+      <h2>Backtesting profundo</h2>
+      <p>
+        A pagina de acuracia usa um backtest temporal para prever cada jogo com apenas o historico anterior
+        a propria partida. As variantes sao comparadas contra um baseline ELO simples.
+      </p>
+      <div class="grid">
+        <div class="card">
+          <span class="tag blue">Metricas</span>
+          <h3>Brier e Log Loss</h3>
+          <p>Alem de acuracia 1X2, o app mede qualidade probabilistica e penaliza excesso de confianca.</p>
+        </div>
+        <div class="card">
+          <span class="tag green">Calibracao</span>
+          <h3>Faixas de confianca</h3>
+          <p>A curva de calibracao compara confianca media prevista com acuracia real observada.</p>
+        </div>
+        <div class="card">
+          <span class="tag amber">Diagnostico</span>
+          <h3>Segmentos dificeis</h3>
+          <p>O relatorio mostra fases, anos e faixas de confianca onde o modelo mais sofre.</p>
+        </div>
+      </div>
     </section>
 
     <section id="screens">
@@ -319,7 +367,7 @@ streamlit run app.py</code></pre>
         <li><strong>Estatisticas:</strong> estatisticas por selecao, simulacao de torneio e odds do proximo jogo.</li>
         <li><strong>Previsoes:</strong> confronto manual entre duas selecoes.</li>
         <li><strong>Historico:</strong> partidas antigas por edicao/fase, maior placar e cards com bandeiras.</li>
-        <li><strong>Acuracia:</strong> backtest temporal e comparativo com previsoes calibradas avaliadas.</li>
+        <li><strong>Acuracia:</strong> backtest temporal, baseline ELO, variantes avancadas, calibracao, segmentos fracos e previsoes calibradas avaliadas.</li>
       </ul>
     </section>
 
@@ -331,7 +379,8 @@ python -m compileall app.py src pages
 pytest -q</code></pre>
       <p style="margin-top: 14px;">
         O projeto tambem possui testes para seguranca de token, status especiais, exclusao de seed na acuracia,
-        integridade do banco e calibracao incremental.
+        integridade do banco, calibracao incremental, ELO dinamico, Dixon-Coles, contexto, ensemble,
+        jogadores/desfalques e backtesting profundo.
       </p>
     </section>
 
