@@ -145,19 +145,37 @@ def apply_external_signal_adjustment(lambda_m, lambda_v, mandante, visitante, ex
             "ajuste_externo_mandante": 1.0,
             "ajuste_externo_visitante": 1.0,
             "motivos_sinais_externos": [],
+            "modelo_com_jogadores": False,
+            "fator_jogadores_mandante": 1.0,
+            "fator_jogadores_visitante": 1.0,
+            "motivos_jogadores": [],
         }
 
     mandante_data = external_signals.get("mandante", {})
     visitante_data = external_signals.get("visitante", {})
     ajuste_m = _clip_adjustment(mandante_data.get("external_adjustment", 1.0))
     ajuste_v = _clip_adjustment(visitante_data.get("external_adjustment", 1.0))
+    player_impact = external_signals.get("player_impact", {}) or {}
+    player_m = _clip_adjustment(player_impact.get("fator_jogadores_mandante", 1.0))
+    player_v = _clip_adjustment(player_impact.get("fator_jogadores_visitante", 1.0))
+    ajuste_m = _clip_adjustment(ajuste_m * player_m)
+    ajuste_v = _clip_adjustment(ajuste_v * player_v)
     motivos = list(external_signals.get("motivos_sinais_externos", []))
     if not motivos:
         motivos = list(mandante_data.get("reasons", [])) + list(visitante_data.get("reasons", []))
+    motivos_jogadores = list(player_impact.get("motivos_jogadores", []))
+    motivos = motivos + motivos_jogadores
 
     return max(float(lambda_m) * ajuste_m, 0.1), max(float(lambda_v) * ajuste_v, 0.1), {
-        "sinais_externos_usados": bool(external_signals.get("sinais_externos_usados", False)),
+        "sinais_externos_usados": bool(
+            external_signals.get("sinais_externos_usados", False)
+            or player_impact.get("modelo_com_jogadores", False)
+        ),
         "ajuste_externo_mandante": float(ajuste_m),
         "ajuste_externo_visitante": float(ajuste_v),
         "motivos_sinais_externos": motivos,
+        "modelo_com_jogadores": bool(player_impact.get("modelo_com_jogadores", False)),
+        "fator_jogadores_mandante": float(player_m),
+        "fator_jogadores_visitante": float(player_v),
+        "motivos_jogadores": motivos_jogadores,
     }
