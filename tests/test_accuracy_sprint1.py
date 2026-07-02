@@ -162,6 +162,7 @@ def test_model_evaluation_compares_base_dynamic_and_form_variants():
     results = evaluation.evaluate_model_variants(_matches().iloc[:3].copy(), teams)
 
     assert set(results["modelo"].unique()) == {
+        "Baseline ELO simples",
         "Base Poisson-ELO",
         "ELO dinâmico",
         "ELO dinâmico + forma/calibração",

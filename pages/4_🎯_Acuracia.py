@@ -11,7 +11,13 @@ sys.path.append(os.path.abspath('.'))
 from src.accuracy import build_prediction_history
 from src.database import get_connection, init_db, load_historical_matches, load_all_teams, sync_openfootball_finished_matches, evaluate_finished_predictions, load_prediction_evaluations
 from src.ML_models import predict_match_probabilities
-from src.model_evaluation import evaluate_model_variants, build_calibration_buckets
+from src.model_evaluation import (
+    build_backtest_diagnostics,
+    build_calibration_buckets,
+    build_deep_backtest_summary,
+    build_segment_performance,
+    evaluate_model_variants,
+)
 from src.model_explainability import explain_prediction, format_explanation_markdown
 from src.external_signal_evaluation import summarize_external_signal_evaluations
 from src.styles import inject_css
@@ -348,19 +354,36 @@ if df_variant_filtered.empty:
         "Ainda nao ha amostra suficiente para comparar as variantes do modelo com os filtros atuais."
     )
 else:
-    summary = df_variant_filtered.groupby("modelo").agg(
-        jogos=("partida_id", "count"),
-        acuracia_1x2=("is_outcome_correct", "mean"),
-        placar_exato=("is_score_correct", "mean"),
-        erro_gols=("goal_error", "mean"),
-        brier_score=("brier_score", "mean"),
-        log_loss=("log_loss", "mean"),
-    ).reset_index()
+    diagnostics = build_backtest_diagnostics(df_variant_filtered)
+    col_diag_1, col_diag_2, col_diag_3, col_diag_4 = st.columns(4)
+    with col_diag_1:
+        st.metric("Jogos únicos no backtest", diagnostics["total_games"])
+    with col_diag_2:
+        st.metric("Modelos avaliados", diagnostics["models_evaluated"])
+    with col_diag_3:
+        st.metric("Histórico médio usado", f"{diagnostics['average_history_matches']:.1f}")
+    with col_diag_4:
+        st.metric("Possível vazamento temporal", diagnostics["possible_leakage_rows"])
+
+    if diagnostics["sample_warning"]:
+        st.warning(
+            "Amostra abaixo do ideal para conclusão robusta. Use o ranking de modelos como diagnóstico, não como verdade definitiva."
+        )
+    if diagnostics["possible_leakage_rows"] > 0:
+        st.error(
+            "Há linhas com cutoff histórico igual ou posterior à data prevista. Revise antes de confiar no backtest."
+        )
+
+    summary = build_deep_backtest_summary(df_variant_filtered)
     summary["Acuracia 1X2"] = (summary["acuracia_1x2"] * 100).round(1)
     summary["Placar exato"] = (summary["placar_exato"] * 100).round(1)
     summary["Erro medio gols"] = summary["erro_gols"].round(2)
     summary["Brier Score"] = summary["brier_score"].round(3)
     summary["Log Loss"] = summary["log_loss"].round(3)
+    summary["Delta Brier vs baseline"] = summary["delta_brier_vs_baseline"].round(3)
+    summary["Delta Log Loss vs baseline"] = summary["delta_log_loss_vs_baseline"].round(3)
+    summary["Erro calibracao"] = summary["calibration_error"].round(3)
+    summary["Gap overconfidence"] = summary["overconfidence_gap"].round(3)
 
     st.dataframe(
         summary[
@@ -372,6 +395,10 @@ else:
                 "Erro medio gols",
                 "Brier Score",
                 "Log Loss",
+                "Delta Brier vs baseline",
+                "Delta Log Loss vs baseline",
+                "Erro calibracao",
+                "Gap overconfidence",
             ]
         ],
         hide_index=True,
@@ -389,6 +416,38 @@ else:
         f"(Brier {best_row['Brier Score']:.3f}, Log Loss {best_row['Log Loss']:.3f}). "
         "O ensemble ponderado combina as variantes por desempenho historico, mantendo o modelo base como ancora quando a amostra ainda e pequena."
     )
+
+    segments = build_segment_performance(df_variant_filtered, min_games=2)
+    if not segments.empty:
+        st.markdown("#### Segmentos mais difíceis")
+        weak_segments = segments.sort_values(["brier_score", "log_loss"], ascending=False).head(12).copy()
+        weak_segments["Acuracia 1X2"] = (weak_segments["acuracia_1x2"] * 100).round(1)
+        weak_segments["Brier Score"] = weak_segments["brier_score"].round(3)
+        weak_segments["Log Loss"] = weak_segments["log_loss"].round(3)
+        weak_segments["Erro calibracao"] = weak_segments["calibration_error"].round(3)
+        st.dataframe(
+            weak_segments.rename(
+                columns={
+                    "segmento_tipo": "Tipo",
+                    "segmento": "Segmento",
+                    "modelo": "Modelo",
+                    "jogos": "Jogos",
+                }
+            )[
+                [
+                    "Tipo",
+                    "Segmento",
+                    "Modelo",
+                    "Jogos",
+                    "Acuracia 1X2",
+                    "Brier Score",
+                    "Log Loss",
+                    "Erro calibracao",
+                ]
+            ],
+            hide_index=True,
+            use_container_width=True,
+        )
 
     chart_data = df_variant_filtered.copy()
     chart_data["data"] = pd.to_datetime(chart_data["data_hora"], errors="coerce").dt.date
