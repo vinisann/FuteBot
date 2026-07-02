@@ -111,6 +111,90 @@ def simulate_penalty_shootout(elo_diff):
             
     return goals_m, goals_v
 
+def simulate_extra_time_goals(m_elo, v_elo, base_lambda=0.38):
+    """Simula gols da prorrogacao com ritmo menor que o tempo normal."""
+    elo_diff = float(m_elo) - float(v_elo)
+    elo_adjustment = 1.12 ** (elo_diff / 100.0)
+    elo_adjustment = np.clip(elo_adjustment, 0.55, 1.90)
+    lambda_m = max(float(base_lambda) * np.sqrt(elo_adjustment), 0.05)
+    lambda_v = max(float(base_lambda) / np.sqrt(elo_adjustment), 0.05)
+    return int(np.random.poisson(lambda_m)), int(np.random.poisson(lambda_v))
+
+def resolve_knockout_after_full_time(m_name, v_name, gols_m, gols_v, m_elo, v_elo):
+    """Resolve jogo eliminatorio com prorrogacao antes dos penaltis."""
+    gols_m = int(gols_m)
+    gols_v = int(gols_v)
+    if gols_m > gols_v:
+        return {
+            "winner": m_name,
+            "loser": v_name,
+            "resolution": "normal_time",
+            "full_time_score": (gols_m, gols_v),
+            "extra_time_score": None,
+            "final_score": (gols_m, gols_v),
+            "penalty_score": None,
+        }
+    if gols_v > gols_m:
+        return {
+            "winner": v_name,
+            "loser": m_name,
+            "resolution": "normal_time",
+            "full_time_score": (gols_m, gols_v),
+            "extra_time_score": None,
+            "final_score": (gols_m, gols_v),
+            "penalty_score": None,
+        }
+
+    et_m, et_v = simulate_extra_time_goals(m_elo, v_elo)
+    final_m = gols_m + et_m
+    final_v = gols_v + et_v
+    if final_m > final_v:
+        return {
+            "winner": m_name,
+            "loser": v_name,
+            "resolution": "extra_time",
+            "full_time_score": (gols_m, gols_v),
+            "extra_time_score": (et_m, et_v),
+            "final_score": (final_m, final_v),
+            "penalty_score": None,
+        }
+    if final_v > final_m:
+        return {
+            "winner": v_name,
+            "loser": m_name,
+            "resolution": "extra_time",
+            "full_time_score": (gols_m, gols_v),
+            "extra_time_score": (et_m, et_v),
+            "final_score": (final_m, final_v),
+            "penalty_score": None,
+        }
+
+    gp_m, gp_v = simulate_penalty_shootout(float(m_elo) - float(v_elo))
+    return {
+        "winner": m_name if gp_m > gp_v else v_name,
+        "loser": v_name if gp_m > gp_v else m_name,
+        "resolution": "penalties",
+        "full_time_score": (gols_m, gols_v),
+        "extra_time_score": (et_m, et_v),
+        "final_score": (final_m, final_v),
+        "penalty_score": (gp_m, gp_v),
+    }
+
+def format_knockout_score(result):
+    """Formata placar de mata-mata com prorrogacao ou penaltis quando houver."""
+    if result.get("final_score") is not None:
+        final_m, final_v = result["final_score"]
+    else:
+        full_m, full_v = result.get("full_time_score", (0, 0))
+        et_m, et_v = result.get("extra_time_score") or (0, 0)
+        final_m, final_v = int(full_m) + int(et_m), int(full_v) + int(et_v)
+    if result.get("resolution") == "penalties" and result.get("penalty_score"):
+        gp_m, gp_v = result["penalty_score"]
+        return f"{final_m} ({gp_m}) - ({gp_v}) {final_v}"
+    if result.get("resolution") == "extra_time":
+        return f"{final_m} - {final_v} a.p."
+    return f"{final_m} - {final_v}"
+
 def predict_match_probabilities(
     mandante_nome,
     visitante_nome,
@@ -629,12 +713,31 @@ def simulate_knockout_match(
     calibration=None,
     model_history=None,
     score_correction=None,
+    return_details=False,
 ):
     # Guard contra times fantasma
     if not m_name or m_name == "TBD":
-        return v_name
+        result = {
+            "winner": v_name,
+            "loser": m_name,
+            "resolution": "walkover",
+            "full_time_score": (0, 0),
+            "extra_time_score": None,
+            "final_score": (0, 0),
+            "penalty_score": None,
+        }
+        return result if return_details else v_name
     if not v_name or v_name == "TBD":
-        return m_name
+        result = {
+            "winner": m_name,
+            "loser": v_name,
+            "resolution": "walkover",
+            "full_time_score": (0, 0),
+            "extra_time_score": None,
+            "final_score": (0, 0),
+            "penalty_score": None,
+        }
+        return result if return_details else m_name
         
     m_elo = team_elo.get(m_name, 1850.0)
     v_elo = team_elo.get(v_name, 1850.0)
@@ -647,12 +750,8 @@ def simulate_knockout_match(
             calibration=calibration,
             score_correction=score_correction,
         )
-        if gols_m > gols_v:
-            return m_name
-        if gols_v > gols_m:
-            return v_name
-        gp_m, gp_v = simulate_penalty_shootout(m_elo - v_elo)
-        return m_name if gp_m > gp_v else v_name
+        result = resolve_knockout_after_full_time(m_name, v_name, gols_m, gols_v, m_elo, v_elo)
+        return result if return_details else result["winner"]
     
     f_ataque_m = ataque.get(m_name, 1.0)
     f_defesa_m = defesa.get(m_name, 1.0)
@@ -675,14 +774,8 @@ def simulate_knockout_match(
     gols_m = np.random.poisson(lambda_m)
     gols_v = np.random.poisson(lambda_v)
     
-    if gols_m > gols_v:
-        return m_name
-    elif gols_v > gols_m:
-        return v_name
-    else:
-        # Realistic penalty shootout simulation
-        gp_m, gp_v = simulate_penalty_shootout(elo_diff)
-        return m_name if gp_m > gp_v else v_name
+    result = resolve_knockout_after_full_time(m_name, v_name, gols_m, gols_v, m_elo, v_elo)
+    return result if return_details else result["winner"]
 
 def run_tournament_simulation(df_matches, df_teams, df_2026, iterations=100, calibration=None):
     iterations = max(1, min(10000, int(iterations))) if iterations is not None else 100
@@ -738,12 +831,7 @@ def run_tournament_simulation(df_matches, df_teams, df_2026, iterations=100, cal
                 calibration=calibration,
                 score_correction=score_correction,
             )
-            if gols_m > gols_v:
-                return t1
-            if gols_v > gols_m:
-                return t2
-            gp_m, gp_v = simulate_penalty_shootout(m_elo - v_elo)
-            return t1 if gp_m > gp_v else t2
+            return resolve_knockout_after_full_time(t1, t2, gols_m, gols_v, m_elo, v_elo)["winner"]
         
         f_ataque_m = ataque.get(t1, 1.0)
         f_defesa_m = defesa.get(t1, 1.0)
@@ -766,13 +854,7 @@ def run_tournament_simulation(df_matches, df_teams, df_2026, iterations=100, cal
         gols_m = np.random.poisson(lambda_m)
         gols_v = np.random.poisson(lambda_v)
         
-        if gols_m > gols_v:
-            return t1
-        elif gols_v > gols_m:
-            return t2
-        else:
-            gp_m, gp_v = simulate_penalty_shootout(elo_diff)
-            return t1 if gp_m > gp_v else t2
+        return resolve_knockout_after_full_time(t1, t2, gols_m, gols_v, m_elo, v_elo)["winner"]
 
     def get_real_phase_matches(stage):
         phases = PHASE_MAPPING[stage]
@@ -1088,14 +1170,8 @@ def simulate_single_bracket(df_matches, df_teams, df_2026, calibration=None):
                 calibration=calibration,
                 score_correction=score_correction,
             )
-            if gols_m > gols_v:
-                return t1, t2, f"{gols_m} - {gols_v}"
-            if gols_v > gols_m:
-                return t2, t1, f"{gols_m} - {gols_v}"
-            gp_m, gp_v = simulate_penalty_shootout(m_elo - v_elo)
-            if gp_m > gp_v:
-                return t1, t2, f"{gols_m} ({gp_m}) - ({gp_v}) {gols_v}"
-            return t2, t1, f"{gols_m} ({gp_m}) - ({gp_v}) {gols_v}"
+            result = resolve_knockout_after_full_time(t1, t2, gols_m, gols_v, m_elo, v_elo)
+            return result["winner"], result["loser"], format_knockout_score(result)
         
         f_ataque_m = ataque.get(t1, 1.0)
         f_defesa_m = defesa.get(t1, 1.0)
@@ -1118,16 +1194,8 @@ def simulate_single_bracket(df_matches, df_teams, df_2026, calibration=None):
         gols_m = np.random.poisson(lambda_m)
         gols_v = np.random.poisson(lambda_v)
         
-        if gols_m > gols_v:
-            return t1, t2, f"{gols_m} - {gols_v}"
-        elif gols_v > gols_m:
-            return t2, t1, f"{gols_m} - {gols_v}"
-        else:
-            gp_m, gp_v = simulate_penalty_shootout(elo_diff)
-            if gp_m > gp_v:
-                return t1, t2, f"{gols_m} ({gp_m}) - ({gp_v}) {gols_v}"
-            else:
-                return t2, t1, f"{gols_m} ({gp_m}) - ({gp_v}) {gols_v}"
+        result = resolve_knockout_after_full_time(t1, t2, gols_m, gols_v, m_elo, v_elo)
+        return result["winner"], result["loser"], format_knockout_score(result)
 
     def get_real_phase_matches(stage):
         phases = PHASE_MAPPING[stage]
