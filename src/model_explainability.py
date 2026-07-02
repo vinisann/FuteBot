@@ -138,6 +138,20 @@ def explain_prediction(prediction):
     elif prediction.get("motivos_sinais_externos"):
         alertas.append("Sinais externos neutros ou sem evidencias suficientes.")
 
+    if prediction.get("modelo_com_jogadores"):
+        fator_m = float(prediction.get("fator_jogadores_mandante", 1.0))
+        fator_v = float(prediction.get("fator_jogadores_visitante", 1.0))
+        motivos_jogadores = prediction.get("motivos_jogadores", [])
+        motivos_texto = " ".join(str(motivo) for motivo in motivos_jogadores[:2])
+        fatores.append(
+            _factor(
+                "jogadores",
+                "Jogadores e desfalques",
+                f"Impacto de elenco: {mandante} {fator_m:.2f}x, {visitante} {fator_v:.2f}x. {motivos_texto}",
+                "positivo" if fator_m > fator_v else "negativo" if fator_m < fator_v else "neutro",
+            )
+        )
+
     market_benchmark = prediction.get("market_benchmark")
     if market_benchmark:
         fatores.append(

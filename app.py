@@ -17,6 +17,7 @@ from src.database import VALID_MATCH_STATUSES, init_db, load_historical_matches,
 from src.ML_models import predict_match_probabilities, simulate_match_in_play
 from src.model_calibration import build_model_calibration
 from src.external_signals import build_match_external_signals
+from src.player_impact import build_player_impact_from_lineups
 from src.api_client import fetch_live_matches_from_api, calculate_match_minute
 from src.scraper import get_probable_lineup
 from src.styles import inject_css
@@ -39,8 +40,7 @@ if "openfootball_sync_2026" not in st.session_state:
 inject_css()
 
 
-def _lineup_to_text(team_name):
-    lineup = get_probable_lineup(team_name)
+def _lineup_to_text(lineup):
     if not lineup or lineup.get("tecnico") == "A confirmar":
         return None
     titulares = lineup.get("titulares", [])
@@ -50,14 +50,24 @@ def _lineup_to_text(team_name):
 
 
 def build_offline_external_signals(mandante_nome, visitante_nome):
-    return build_match_external_signals(
+    raw_lineups = {
+        mandante_nome: get_probable_lineup(mandante_nome),
+        visitante_nome: get_probable_lineup(visitante_nome),
+    }
+    external_signals = build_match_external_signals(
         mandante_nome,
         visitante_nome,
         lineups={
-            mandante_nome: _lineup_to_text(mandante_nome),
-            visitante_nome: _lineup_to_text(visitante_nome),
+            mandante_nome: _lineup_to_text(raw_lineups[mandante_nome]),
+            visitante_nome: _lineup_to_text(raw_lineups[visitante_nome]),
         },
     )
+    external_signals["player_impact"] = build_player_impact_from_lineups(
+        mandante_nome,
+        visitante_nome,
+        lineups=raw_lineups,
+    )
+    return external_signals
 
 
 def clean_html(html_str):

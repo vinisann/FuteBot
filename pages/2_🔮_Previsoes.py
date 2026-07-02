@@ -12,13 +12,13 @@ from src.ML_models import predict_match_probabilities
 from src.model_calibration import build_model_calibration
 from src.model_explainability import explain_prediction, format_explanation_markdown
 from src.external_signals import build_match_external_signals
+from src.player_impact import build_player_impact_from_lineups
 from src.scraper import fetch_match_specific_news, get_probable_lineup
 from src.styles import inject_css
 from src.utils import get_flag, get_flag_html
 
 
-def _lineup_to_text(team_name):
-    lineup = get_probable_lineup(team_name)
+def _lineup_to_text(lineup):
     if not lineup or lineup.get("tecnico") == "A confirmar":
         return None
     titulares = lineup.get("titulares", [])
@@ -47,11 +47,20 @@ def load_external_prediction_inputs(mandante_nome, visitante_nome):
         if visitante_nome.lower() in text_lower:
             news_by_team[visitante_nome].append(text)
 
-    lineups = {
-        mandante_nome: _lineup_to_text(mandante_nome),
-        visitante_nome: _lineup_to_text(visitante_nome),
+    raw_lineups = {
+        mandante_nome: get_probable_lineup(mandante_nome),
+        visitante_nome: get_probable_lineup(visitante_nome),
     }
-    return {"news": news_by_team, "lineups": lineups}
+    lineups = {
+        mandante_nome: _lineup_to_text(raw_lineups[mandante_nome]),
+        visitante_nome: _lineup_to_text(raw_lineups[visitante_nome]),
+    }
+    player_impact = build_player_impact_from_lineups(
+        mandante_nome,
+        visitante_nome,
+        lineups=raw_lineups,
+    )
+    return {"news": news_by_team, "lineups": lineups, "player_impact": player_impact}
 
 
 def clean_html(html_str):
@@ -106,6 +115,7 @@ else:
             news_items=external_inputs["news"],
             lineups=external_inputs["lineups"],
         )
+        external_signals["player_impact"] = external_inputs["player_impact"]
         pred = predict_match_probabilities(
             mandante_nome,
             visitante_nome,

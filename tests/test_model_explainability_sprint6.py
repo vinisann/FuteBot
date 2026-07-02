@@ -66,6 +66,28 @@ def test_explain_prediction_marks_neutral_context_and_zebra_factor():
     assert any(f["tipo"] == "zebra" and f["impacto"] == "alerta" for f in explanation["fatores"])
 
 
+def test_explain_prediction_includes_player_impact_factor():
+    explainability = importlib.import_module("src.model_explainability")
+    explanation = explainability.explain_prediction(
+        {
+            "mandante": "Brasil",
+            "visitante": "Alemanha",
+            "prob_vitoria_mandante": 0.51,
+            "prob_empate": 0.27,
+            "prob_vitoria_visitante": 0.22,
+            "xG_mandante": 1.5,
+            "xG_visitante": 1.1,
+            "modelo_com_jogadores": True,
+            "fator_jogadores_mandante": 1.04,
+            "fator_jogadores_visitante": 0.98,
+            "motivos_jogadores": ["Brasil: titulares acima da media elevam levemente o potencial."],
+        }
+    )
+
+    assert any(f["tipo"] == "jogadores" for f in explanation["fatores"])
+    assert any("Brasil" in f["descricao"] for f in explanation["fatores"] if f["tipo"] == "jogadores")
+
+
 def test_format_explanation_markdown_is_streamlit_friendly():
     explainability = importlib.import_module("src.model_explainability")
     explanation = explainability.explain_prediction(
